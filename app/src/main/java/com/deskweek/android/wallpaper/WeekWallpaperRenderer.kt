@@ -57,7 +57,7 @@ class WeekWallpaperRenderer {
         width: Int,
         height: Int,
         today: LocalDate = LocalDate.now(),
-        tasks: List<WallTask> = SampleTasks.items,
+        tasks: List<WallTask> = emptyList(),
         style: Style = Style(),
     ) {
         if (width <= 0 || height <= 0) return

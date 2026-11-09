@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 与桌面版 6 色板配套的文字色；壁纸/桌面背景下保证可读 -->
+    <color name="dw_ink">#E61E1E22</color>
+    <color name="dw_ink_dim">#99202020</color>
+    <color name="dw_accent">#FF2F6F5E</color>
+    <color name="dw_today_bg">#FF9BD3C7</color>
+    <color name="dw_surface">#ECF6F5F2</color>
+    <color name="dw_c1">#FF9BD3C7</color>
+    <color name="dw_c2">#FFE7BD82</color>
+    <color name="dw_c3">#FFF39AA4</color>
+    <color name="dw_c4">#FF90B8EE</color>
+    <color name="dw_c5">#FFC8A6EF</color>
+    <color name="dw_c6">#FFA7D48D</color>
+</resources>

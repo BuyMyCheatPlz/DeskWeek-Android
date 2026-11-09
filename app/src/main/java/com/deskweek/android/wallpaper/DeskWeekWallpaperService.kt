@@ -4,7 +4,6 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Shader
@@ -15,6 +14,14 @@ import android.util.Log
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.SurfaceHolder
+import com.deskweek.android.core.data.TaskRepository
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 import java.time.LocalDate
 
 /**
@@ -44,6 +51,11 @@ class DeskWeekWallpaperService : WallpaperService() {
             }
     }
 
+    override fun onCreate() {
+        super.onCreate()
+        TaskRepository.init(applicationContext)
+    }
+
     override fun onCreateEngine(): Engine = DeskEngine()
 
     private inner class DeskEngine : Engine() {
@@ -51,6 +63,8 @@ class DeskWeekWallpaperService : WallpaperService() {
         private val handler = Handler(Looper.getMainLooper())
         private val renderer = WeekWallpaperRenderer()
         private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
         private val gestureDetector = GestureDetector(
             this@DeskWeekWallpaperService,
             object : GestureDetector.SimpleOnGestureListener() {
@@ -65,6 +79,7 @@ class DeskWeekWallpaperService : WallpaperService() {
         private var width = 0
         private var height = 0
         private var lastDrawnDate: LocalDate? = null
+        private var collectJob: Job? = null
 
         /** 跨天时重绘（壁纸可能连续挂机好几天） */
         private val midnightTick = object : Runnable {
@@ -81,6 +96,8 @@ class DeskWeekWallpaperService : WallpaperService() {
 
         override fun onDestroy() {
             handler.removeCallbacksAndMessages(null)
+            collectJob?.cancel()
+            scope.cancel()
             super.onDestroy()
         }
 
@@ -90,8 +107,11 @@ class DeskWeekWallpaperService : WallpaperService() {
             if (visible) {
                 drawFrame()
                 scheduleMidnightTick()
+                startCollecting()
             } else {
                 lastDrawnDate = null
+                collectJob?.cancel()
+                collectJob = null
             }
         }
 
@@ -104,10 +124,20 @@ class DeskWeekWallpaperService : WallpaperService() {
         override fun onSurfaceDestroyed(holder: SurfaceHolder) {
             visible = false
             handler.removeCallbacks(midnightTick)
+            collectJob?.cancel()
+            collectJob = null
         }
 
         override fun onTouchEvent(event: MotionEvent) {
             gestureDetector.onTouchEvent(event)
+        }
+
+        /** 数据一变就重绘；壁纸和 App 同进程，直接吃同一个 StateFlow */
+        private fun startCollecting() {
+            if (collectJob != null) return
+            collectJob = scope.launch {
+                TaskRepository.state.collectLatest { drawFrame() }
+            }
         }
 
         private fun scheduleMidnightTick() {
@@ -147,21 +177,23 @@ class DeskWeekWallpaperService : WallpaperService() {
                 width = width,
                 height = height,
                 today = LocalDate.now(),
-                tasks = SampleTasks.items,
+                tasks = TaskRepository.state.value.items
+                    .filter { !it.deleted && it.date.isNotBlank() }
+                    .map { it.toWallTask() },
                 style = WeekWallpaperRenderer.Style(dark = dark),
             )
             lastDrawnDate = LocalDate.now()
         }
 
         private fun drawBackground(canvas: Canvas, dark: Boolean) {
-            if (dark) {
-                bgPaint.shader = LinearGradient(
+            bgPaint.shader = if (dark) {
+                LinearGradient(
                     0f, 0f, 0f, height.toFloat(),
                     intArrayOf(0xFF14161A.toInt(), 0xFF1E2127.toInt()),
                     null, Shader.TileMode.CLAMP,
                 )
             } else {
-                bgPaint.shader = LinearGradient(
+                LinearGradient(
                     0f, 0f, 0f, height.toFloat(),
                     intArrayOf(0xFFF6F5F2.toInt(), 0xFFE9E6E0.toInt()),
                     null, Shader.TileMode.CLAMP,

@@ -2,21 +2,39 @@
 
 [DeskWeek](https://github.com/EasonGuuu/Deskweek) 的 Android 原生版：周历 + 待办，手机与平板通用。
 
-桌面版的形态是「贴在壁纸上的周历浮窗」，Android 上不对应悬浮窗，对应**主屏小组件**（Glance）。
-完整周历与任务管理放在主程序里。
+Android 采用**透明主屏周历小组件**（Glance）与完整管理 App，保留现有壁纸，可与 Wallpaper Engine 等动态壁纸共存。
+规划支持 Windows、Android 手机、Android 平板首次配对后的局域网自动发现与双向同步，不依赖云服务或电脑常开；保留 `data.json` 导入导出。
+
+Android 休眠、强行停止及后台执行限制可能延迟同步，恢复执行后补齐，不承诺进程停止时仍能即时同步。
 
 | | |
 | --- | --- |
 | 技术栈 | Kotlin + Jetpack Compose + Material 3 Adaptive |
-| 数据 | Room + DataStore，`data.json` 与桌面版双向兼容 |
+| 数据（规划） | Room + DataStore，本地优先，`data.json` 与桌面版双向兼容 |
+| 同步（规划） | 三端对等局域网同步，首次配对，离线编辑后补同步 |
 | 最低版本 | Android 8.0（API 26） |
-| 状态 | **规划中** — 见 [实现规划](docs/android-port-plan.md) |
+| 状态 | **P0 展示层已实现并通过灰测**；本地数据闭环部分完成；**三端同步未实现** — 见 [实现规划](docs/android-port-plan.md)、[同步协议](docs/lan-sync-protocol.md) 与 [验证报告](docs/verification-report.md) |
 
 ## 与上游的关系
 
 - 上游：[EasonGuuu/Deskweek](https://github.com/EasonGuuu/Deskweek)（Electron + Win32，MIT）
-- 本仓库：独立实现，从上游 fork 的 `main` 起步，**不共享代码**，只对齐数据格式与业务规则
-- 上游数据文件 `data/data.json` 可直接导入本应用，也可从本应用导出回灌桌面版
+- 本仓库：独立原生实现，从上游 fork 的 `main` 起步，对齐业务规则、交换格式与同步协议
+- 目标支持桌面版 `data/data.json` 导入和兼容导出；当前已按该格式读写本地数据（含原子写与 `.backup` 恢复）
+- 桌面端也需要增加同步模块，当前上游版本尚不具备局域网同步能力
+
+## 当前实现状态
+
+| 能力 | 状态 | 证据 |
+| --- | --- | --- |
+| 透明周历小组件（首版主形态） | ✅ 已实现 | `docs/evidence/04-widget.png` |
+| 主程序周视图 / 清单 / 编辑 | ✅ 已实现 | `docs/evidence/03-app-with-data.png` |
+| `data.json` 兼容读写 + 原子写 + 备份恢复 | ✅ 已实现，24 条单测 | `app/src/test/` |
+| 导入 / 导出 | ✅ 逻辑+单测；UI 未端到端点击验证 | `TaskStoreTest` |
+| 动态壁纸形态（实验） | ✅ 可运行，**非首版形态** | `docs/evidence/02-icons-on-top.png` |
+| 三端局域网同步 | ❌ 未实现 | 仅有协议设计 |
+| AI 总结 / 农历 / 拖拽 / 自适应双栏 | ❌ 未实现 | 后续阶段 |
+
+完整门禁记录见 [验证报告](docs/verification-report.md)。
 
 ## 构建
 
