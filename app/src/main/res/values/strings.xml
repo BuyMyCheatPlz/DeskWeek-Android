@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">DeskWeek</string>
+    <string name="wallpaper_description">周历与待办，直接画在壁纸上，图标压在上面</string>
+    <string name="widget_description">今日待办（当动态壁纸被其他应用占用时的保底形态）</string>
+</resources>

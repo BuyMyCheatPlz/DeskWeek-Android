@@ -42,6 +42,7 @@ dependencies {
     implementation(libs.compose.ui.graphics)
     implementation(libs.compose.ui.tooling.preview)
     implementation(libs.compose.material3)
+    implementation(libs.androidx.glance.appwidget)
 
     debugImplementation(libs.compose.ui.tooling)
 }
