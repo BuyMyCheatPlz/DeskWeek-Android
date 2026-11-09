@@ -107,7 +107,7 @@
 | DOCX/PPTX/XLSX 解析 | **ZIP + XmlPullParser 自写抽取（不引 POI）** | POI 在 Android 有 dex/体积坑；Office 格式本质是 ZIP+XML，自写约 400 行 |
 | 图片 OCR | ML Kit Text Recognition v2（离线中文） | 包体 +约 10 MB |
 | 密钥存储 | Android Keystore AES-GCM，密文存 DataStore | 等价桌面版 `data/ai-key.dat`(DPAPI)；`androidx.security.crypto` 已弃用，不用 |
-| 构建 | AGP 8.7 + Gradle 8.11，`minSdk 26` / `targetSdk 36` | |
+| 构建 | Gradle 9.9.0 · AGP 8.13.2（保守）· Kotlin 2.4.21 · KSP 对齐 Kotlin 版本 | 首次 sync 通过后把版本钉进 `libs.versions.toml`；**不手写猜测版本**，以 Wizard 生成结果为准 |
 
 ---
 
@@ -142,7 +142,7 @@ DeskWeek-Android/
 | ID | 任务 | 验收 |
 | --- | --- | --- |
 | A0 | Android Studio 安装 JDK 21 + SDK 36（用户自装） | `./gradlew --version` 通过 |
-| A1 | 建 Gradle 多模块工程、version catalog、插件 | `./gradlew assembleDebug` 通过 |
+| A1 | 用 Android Studio 向导生成最小工程（保证 Gradle/AGP/Kotlin/KSP 版本自洽），再拆多模块 + version catalog | `./gradlew assembleDebug` 通过 |
 | A2 | 模块依赖方向约束（feature → core，feature 之间禁止互依） | `./gradlew projects` 正确 |
 | A3 | CI：`lint` + `test` + `assembleDebug` | PR 绿灯 |
 
