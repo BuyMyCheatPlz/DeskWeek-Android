@@ -20,11 +20,30 @@
 
 ## 构建
 
-需要 JDK 21 + Android SDK（`platform-36`、`build-tools`）。用 Android Studio 打开本目录即可，或用命令行：
+已验证的工具链组合：
+
+| 组件 | 版本 |
+| --- | --- |
+| JDK | 21（Temurin 21.0.13） |
+| Gradle | 9.9.0（含 wrapper） |
+| AGP | 9.5.1（**Kotlin 支持已内置，不需要 `kotlin-android` 插件**） |
+| Kotlin | 2.4.21（经 AGP 内置） |
+| compileSdk / targetSdk / minSdk | 37 / 36 / 26 |
+| SDK Platform | `platforms/android-37.2`（另装 `android-36` 备用）、`build-tools/36.0.0` |
 
 ```bash
 ./gradlew assembleDebug
 ```
+
+需要 `local.properties` 指向本机 SDK（该文件不入库）：
+
+```properties
+sdk.dir=C\:\\path\\to\\Android\\Sdk
+```
+
+> 国内网络提示：`services.gradle.org` 走 307 重定向时经常超时，可把
+> `gradle/wrapper/gradle-wrapper.properties` 里的 `distributionUrl` 换成
+> `https://mirrors.cloud.tencent.com/gradle/gradle-9.9.0-bin.zip`。
 
 ## 许可
 

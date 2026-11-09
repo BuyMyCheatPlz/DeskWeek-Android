@@ -69,24 +69,38 @@
 
 ---
 
-## 2. 形态转译：桌面浮窗 → 主屏小组件
+## 2. 形态转译：桌面浮窗 → 动态壁纸（**主形态，已改**）
 
-| 路线 | 对等度 | 代价 |
+**产品要求**：和桌面版一样，"贴在桌面上、图标压在它上面"。
+
+关键结论：**Glance 小组件做不到这件事**。小组件占的是桌面网格的格子，图标只能排在它旁边，永远不会压在它上面。能做到"图标压在文字上"的只有**动态壁纸（Live Wallpaper）**——壁纸层在图标层之下，这与桌面版挂在壁纸上的原理完全一致。
+
+| 方案 | 图标能否压在内容上 | 交互 | 代价 |
+| --- | --- | --- | --- |
+| **A. 动态壁纸 `WallpaperService`（主，选定）** | **能** | 点击/双击（`Engine.onTouchEvent`） | 会替换系统壁纸，需内置"选图作底"；Canvas 手绘，不能直接用 Compose |
+| B. Glance 小组件（辅，可选） | 不能 | 原生点击、可勾选 | 占格子，只能放入口和今日摘要 |
+| C. `SYSTEM_ALERT_WINDOW` 悬浮窗 | 能，但会遮挡其他应用 | 完整 | 权限弹窗劝退、Play 风险、与桌面版"永不遮挡"定位相反 |
+
+### 2.1 双形态分工
+
+| 形态 | 职责 | 对应桌面版 |
 | --- | --- | --- |
-| **A. Glance App Widget**（选定） | 高：常驻主屏、无需权限、不遮挡其他应用 | 信息密度受尺寸限制 |
-| B. `SYSTEM_ALERT_WINDOW` 悬浮窗 | 最高 | 权限劝退、遮挡其他应用、Play 风险，且与桌面版"在应用之下"的定位相反 |
-| C. 常驻通知 | 低 | 打扰 |
+| 动态壁纸 | 常驻可见的周历/日历文字，图标压在其上 | `widget` 浮窗 |
+| 主程序 | 录入、编辑、设置、AI、导入导出 | `manager` 管理中心 |
+| 小组件（可选，二期） | 桌面上的"今日 3 条"入口 | 无 |
 
-尺寸分档：
+### 2.2 动态壁纸实现要点
 
-| 尺寸 | 内容 |
-| --- | --- |
-| 2×2 / 4×2 | 今日日期 + 农历 + 3 条待办（可勾选） |
-| 4×4 | 整周 7 列：日期、农历/节气、每日 2–3 条 |
-| 5×4+ / 平板 | 整周 7 列 + 选中日期的任务列表 |
-| 透明背景 | 沿用 `prefs.widgetBackground`，`transparent` 时去掉底板与阴影 |
+- `WallpaperService` + `Engine.lockCanvas()` 手绘，**不复用 Compose**；配色/字号抽成与主程序共享的 design token，两套渲染保证一致。
+- **底图**：用户选一张本地图片（或纯色/纯透明）作底，我们把它画上去再叠日历文字。桌面版是"不替换系统壁纸"，Android 壁纸服务天然抢占壁纸位，用"选图作底"还原体验。
+- **位置与避让**：提供九宫格对齐 + 水平/垂直偏移 + 缩放，让文字落在图标稀疏的一侧（这是桌面版没有的、Android 特有的需要）。
+- **刷新**：不能常驻渲染（耗电）。`onVisibilityChanged` 可见时订阅 Room 数据，数据变更或跨天时重绘一次；不可见时释放。
+- **交互**：单击任务行 → 切换完成；双击空白 → 打开主程序对应日期；长按 → 无（壁纸层手势会与 Launcher 冲突）。
+- **透明/玻璃**：沿用桌面版 `prefs.widgetBackground`，`transparent` 时只画文字。
 
-主程序承担原 `manager` 的全部职责。
+### 2.3 风险（已确认要提前测）
+
+部分国产 Launcher（MIUI / EMUI / ColorOS）对第三方动态壁纸支持不完整，可能表现为：设置页找不到、切换壁纸后被重置、深色模式下自动压暗。**这是本方案最大的落地风险，P0 阶段就要拿真机验证，不能留到最后。**
 
 ---
 
@@ -100,14 +114,29 @@
 | 持久化 | Room 2.7（KSP）+ DataStore | Room 存任务，DataStore 存 prefs 与 `rawJson` |
 | 序列化 | `kotlinx-serialization-json` | 与 `data.json` 双向兼容 |
 | DI | Hilt（KSP） | |
-| 小组件 | Glance 1.1 + WorkManager | 数据变更主动刷新 + 30 min 兜底 |
+| **壁纸渲染** | `WallpaperService` + `Canvas`（`lockCanvas`），`onVisibilityChanged` 控制订阅 | 手绘，不能复用 Compose；与主程序共享 design token |
+| 小组件（可选） | Glance 1.2 + WorkManager | 二期；仅今日摘要与入口 |
 | 历法 | `cn.6tail:lunar`（Java 版，同作者 MIT） | 需与 `lunar.js` 逐日对比 |
 | 网络 | OkHttp + kotlinx-serialization | AI 接口 |
 | PDF 解析 | `com.tom-roush:pdfbox-android` | |
 | DOCX/PPTX/XLSX 解析 | **ZIP + XmlPullParser 自写抽取（不引 POI）** | POI 在 Android 有 dex/体积坑；Office 格式本质是 ZIP+XML，自写约 400 行 |
 | 图片 OCR | ML Kit Text Recognition v2（离线中文） | 包体 +约 10 MB |
 | 密钥存储 | Android Keystore AES-GCM，密文存 DataStore | 等价桌面版 `data/ai-key.dat`(DPAPI)；`androidx.security.crypto` 已弃用，不用 |
-| 构建 | Gradle 9.9.0 · AGP 8.13.2（保守）· Kotlin 2.4.21 · KSP 对齐 Kotlin 版本 | 首次 sync 通过后把版本钉进 `libs.versions.toml`；**不手写猜测版本**，以 Wizard 生成结果为准 |
+| 构建 | **已实测**：Gradle 9.9.0 · AGP 9.5.1 · Kotlin 2.4.21（AGP 内置）· JDK 21 · compileSdk 37 / targetSdk 36 / minSdk 26 | 见 §3.1 |
+
+### 3.1 实测记录（本机已验证，`assembleDebug` 通过）
+
+装环境时踩了五个坑，记下来避免重复：
+
+| # | 现象 | 原因 | 解决 |
+| --- | --- | --- | --- |
+| 1 | JDK 下载只有 70 KB/s | Adoptium API 307 重定向到 GitHub Releases | 换清华镜像 `mirrors.tuna.tsinghua.edu.cn/Adoptium`（3.6 MB/s） |
+| 2 | `sdkmanager "platforms;android-36"` 静默无效 | 新版 cmdline-tools(23.0.0) 包名改为斜杠 | `platforms/android-36`、`build-tools/36.0.0` |
+| 3 | `The 'org.jetbrains.kotlin.android' plugin is no longer required since AGP 9.0` | AGP 9 内置 Kotlin 支持 | 删掉该插件，只保留 `kotlin-compose` |
+| 4 | `core-ktx:1.19.1 requires compileSdk 37` | 2026 年 androidx 基线已升到 37 | 装 `platforms/android-37.2`，`compileSdk = 37` |
+| 5 | `gradle wrapper` 报 `Test of distribution url failed` | `services.gradle.org` 307 超时 | `--no-validate-url`，或换腾讯镜像 |
+
+> Android SDK 平台从 37 起改为「主.次」版本命名（`android-37.0` / `37.2`），不是 `android-37`。
 
 ---
 
@@ -126,16 +155,17 @@ DeskWeek-Android/
 │  └─ ai/                      OpenAI 兼容客户端、文档抽取、密钥加密
 ├─ feature/
 │  ├─ tasks/                   清单三态 + 编辑面板
-│  ├─ week/                    周视图（手机 3 列 / 平板 7 列）
+│  ├─ week/                    周视图（Compose，主程序内）
+│  ├─ wallpaper/               WallpaperService + Canvas 周历渲染 + 底图/对齐设置
 │  ├─ ai/                      AI 总结面板 + 建议列表 + 批量入库
-│  ├─ settings/                主题、透明、导入导出、AI 配置
-│  └─ widget/                  Glance 三种尺寸 + 刷新调度
+│  ├─ settings/                主题、透明、导入导出、AI 配置、壁纸外观
+│  └─ widget/                  Glance（二期）
 └─ sync/                       data.json 导入导出
 ```
 
 ---
 
-## 5. 任务拆解与验收（合计约 16 人日）
+## 5. 任务拆解与验收（合计约 17.5 人日，不含可选小组件）
 
 ### P0 工程初始化（1d）
 
@@ -192,14 +222,24 @@ D4 需自绘 `pointerInput`（Compose 无现成跨列拖放），预算 1.5 天�
 | E7 | 建议面板：解析结果逐条勾选、批量入库（对应桌面版 proposal 流） | 只插入勾选项 |
 | E8 | 密钥加密（Keystore AES-GCM）+ 首次启用隐私确认 | 重启后仍可用，明文不落盘 |
 
-### P5 小组件（2d）
+### P5 动态壁纸（3.5d）— 主形态，最高优先级
 
 | ID | 任务 | 验收 |
 | --- | --- | --- |
-| F1 | Glance 三种尺寸，共用 Room 数据 | 主屏渲染正确 |
-| F2 | 点击勾选 + 打开主程序 | 状态双向同步 |
-| F3 | 透明模式 + 深浅主题 | 与 `prefs.widgetBackground` 联动 |
-| F4 | 刷新：变更即 `updateAll`，WorkManager 兜底 | 冷启动 1 分钟内刷新 |
+| F0 | **真机验证可行性**：在目标机型（含一台国产 ROM）装一个空 `WallpaperService`，确认能设置、能常驻、不被系统重置 | 三台真机均能选中并保持 |
+| F1 | `WallpaperService` + `Engine` 骨架，`onVisibilityChanged` 驱动订阅 | 可见时订阅、不可见时释放，无泄漏 |
+| F2 | Canvas 渲染器：周历 7 列、日期/农历/节气/任务文字、6 色板 | 与主程序同一日期渲染一致 |
+| F3 | 底图：选本地图片/纯色/透明，按屏幕裁切填充 | 切换后立即生效 |
+| F4 | 布局设置：九宫格对齐、偏移、缩放、字号、显示项开关 | 平板横竖屏都不越界 |
+| F5 | 刷新：Room 变更、跨天 00:00、时区/语言变更触发重绘 | 改一条任务，壁纸 2 秒内更新 |
+| F6 | 触摸：单击任务切完成、双击空白打开主程序对应日期 | 不与 Launcher 手势冲突 |
+| F7 | 耗电与内存：静态画面不重复绘制，锁屏/不可见时零 CPU | 待机 8 小时耗电 < 1% |
+
+### P5b 小组件（可选，1d，二期）
+
+| ID | 任务 | 验收 |
+| --- | --- | --- |
+| F8 | Glance 今日摘要（2×2 / 4×2），点击进主程序 | 主屏渲染正确 |
 
 ### P6 导入导出（1d）
 
@@ -232,12 +272,15 @@ D4 需自绘 `pointerInput`（Compose 无现成跨列拖放），预算 1.5 天�
 
 | # | 风险 | 影响 | 对策 |
 | --- | --- | --- | --- |
-| 1 | 小组件装不下原浮窗信息密度 | 核心体验打折 | 尺寸分档；完整周历留在主程序 |
-| 2 | `data.json` 兼容层做错 | 导入导出报废 | P1 第一件事 + 真实 fixture round-trip |
-| 3 | 跨列拖拽无现成组件 | P3 超期 | 兜底「长按选日 + 弹层改期」，拖拽作增强 |
-| 4 | 自写 Office 抽取器覆盖不全 | AI 导入失败 | 先支持 Word/PDF，XLSX/PPTX 降级为"仅文本" |
-| 5 | ML Kit 增包体约 10MB | 安装包变大 | App Bundle 按 ABI/语言拆分 |
-| 6 | 农历口径漂移 | 日历信息错 | 逐日对比测试（§6） |
+| 1 | **国产 ROM 对第三方动态壁纸支持不完整** | 主形态可能直接不可用 | F0 前置验证；准备降级路径：退化为"大尺寸透明小组件" |
+| 2 | 动态壁纸抢占系统壁纸位 | 用户原壁纸丢失 | 内置"选本地图片作底"，设置页明确提示 |
+| 3 | 壁纸层手绘与 Compose 两套渲染 | 视觉漂移、维护成本 | 抽共享 design token（字号/间距/颜色），P5 与 P3 用同一份 token |
+| 4 | 壁纸常驻影响续航 | 用户卸载 | 静态不重绘、不可见零 CPU；F7 量化验收 |
+| 5 | `data.json` 兼容层做错 | 导入导出报废 | P1 第一件事 + 真实 fixture round-trip |
+| 6 | 跨列拖拽无现成组件 | P3 超期 | 兜底「长按选日 + 弹层改期」，拖拽作增强 |
+| 7 | 自写 Office 抽取器覆盖不全 | AI 导入失败 | 先支持 Word/PDF，XLSX/PPTX 降级为"仅文本" |
+| 8 | ML Kit 增包体约 10MB | 安装包变大 | App Bundle 按 ABI/语言拆分 |
+| 9 | 农历口径漂移 | 日历信息错 | 逐日对比测试（§6） |
 
 ---
 
