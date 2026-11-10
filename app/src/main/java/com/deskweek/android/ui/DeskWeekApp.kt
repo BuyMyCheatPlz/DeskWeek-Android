@@ -422,18 +422,22 @@ private fun SettingsScreen(onOpenWallpaper: () -> Unit) {
             scope.launch {
                 status = withContext(Dispatchers.IO) {
                     runCatching {
+                        val identity = com.deskweek.android.core.sync.SyncIdentity
+                            .loadOrCreate(java.io.File(context.filesDir, "sync"))
                         val report = SyncClient(
                             host = SyncClient.EMULATOR_HOST,
                             port = SyncClient.P0_PORT,
                             expectedSha256 = SyncClient.P0_PIN,
+                            identity = identity,
                         ).handshake()
-                        "P0 互通成功 · ${report.tlsVersion} · 对端 ${report.peerActor} · PONG ${report.pongNonce}"
-                    }.getOrElse { "P0 互通失败：${it.message}" }
+                        "互通成功 · ${report.tlsVersion} · 对端 ${report.peerActor} · " +
+                            "ACK ${report.ackVectors} · 签名已校验"
+                    }.getOrElse { "互通失败：${it.message}" }
                 }
             }
-        }) { Text("P0 互通自检") }
+        }) { Text("P0/P2 互通自检") }
         Text(
-            "需要宿主机运行 node scripts/serve-p0.cjs；仅验证 TLS + 帧协议 + HELLO/PING。",
+            "需要宿主机运行 node scripts/serve-p0.cjs；验证 TLS + 帧协议 + ECDSA 签名操作。",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.outline,
         )

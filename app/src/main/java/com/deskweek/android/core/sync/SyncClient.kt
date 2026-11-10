@@ -2,65 +2,78 @@ package com.deskweek.android.core.sync
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
+import kotlinx.serialization.json.put
 import java.io.DataInputStream
 import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.security.MessageDigest
 import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
+import java.time.Instant
+import java.util.UUID
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.X509TrustManager
 
 /**
- * P0 同步自检客户端：一条 TLS 连接上完成
- * HELLO → HELLO/SUMMARY → PING → PONG，用来验证
- * 「Android 与桌面端能用同一套帧与消息互通」。
+ * P0/P2 同步自检客户端：一条 TLS 连接上完成
+ * 签名 HELLO → HELLO/SUMMARY → PING/PONG → 签名 OPS → ACK。
  *
- * 只做握手与一条 PING，不做发现、配对、操作合并。
  * 证书按 SHA-256 固定（pin），不使用「接受所有证书」。
+ * 不含发现、配对与操作合并。
  */
 class SyncClient(
     private val host: String,
     private val port: Int,
     private val expectedSha256: String,
+    private val identity: SyncIdentity,
 ) {
 
     data class Report(
         val tlsVersion: String,
         val peerActor: String,
-        val summaryVectors: Map<String, Long>,
         val pongNonce: String,
+        val ackVectors: Map<String, Long>,
+        val opId: String,
     )
 
-    fun handshake(timeoutMs: Int = 6000): Report {
+    fun handshake(timeoutMs: Int = 8000): Report {
         val socket = connect(timeoutMs)
         try {
             socket.soTimeout = timeoutMs
             val output: OutputStream = socket.outputStream
             val input = DataInputStream(socket.inputStream)
 
-            write(output, hello())
+            write(output, identity.signed(hello()))
+
             val reply = read(input)
             if (type(reply) != "HELLO") fail("expected HELLO, got ${type(reply)}")
             val peerActor = reply["actorId"]!!.jsonPrimitive.content
 
             val summary = read(input)
             if (type(summary) != "SUMMARY") fail("expected SUMMARY, got ${type(summary)}")
-            val vectors = (summary["vectors"] as JsonObject).mapValues { it.value.jsonPrimitive.long }
 
             write(output, ping())
             val pong = read(input)
             if (type(pong) != "PONG") fail("expected PONG, got ${type(pong)}")
 
+            val op = operation()
+            write(output, op)
+            val ack = read(input)
+            if (type(ack) != "ACK") fail("expected ACK, got ${type(ack)}")
+            val vectors = (ack["vectors"] as JsonObject).mapValues { it.value.jsonPrimitive.long }
+
             return Report(
                 tlsVersion = socket.session.protocol,
                 peerActor = peerActor,
-                summaryVectors = vectors,
                 pongNonce = pong["nonce"]!!.jsonPrimitive.content,
+                ackVectors = vectors,
+                opId = (op["ops"] as kotlinx.serialization.json.JsonArray)[0]
+                    .jsonObject["opId"]!!.jsonPrimitive.content,
             )
         } finally {
             runCatching { socket.close() }
@@ -76,14 +89,50 @@ class SyncClient(
         return raw
     }
 
-    private fun hello(): JsonObject = Json.parseToJsonElement(
-        """{"type":"HELLO","protocolVersion":1,"groupId":"p0-group","actorId":"android-p0",
-            "nonce":"android-hello","capabilities":["ops","tls"]}""",
-    ).jsonObject
+    private fun hello(): JsonObject = buildJsonObject {
+        put("type", "HELLO")
+        put("protocolVersion", 1)
+        put("groupId", P0_GROUP)
+        put("actorId", identity.actorId)
+        put("nonce", "android-hello")
+        put("capabilities", kotlinx.serialization.json.buildJsonArray {
+            add(kotlinx.serialization.json.JsonPrimitive("ops"))
+            add(kotlinx.serialization.json.JsonPrimitive("tls"))
+        })
+        put("publicKey", identity.publicKeyB64)
+    }
 
-    private fun ping(): JsonObject = Json.parseToJsonElement(
-        """{"type":"PING","protocolVersion":1,"nonce":"android-ping"}""",
-    ).jsonObject
+    private fun ping(): JsonObject = buildJsonObject {
+        put("type", "PING")
+        put("protocolVersion", 1)
+        put("nonce", "android-ping")
+    }
+
+    /** 一条真实业务形态的 create 操作，带 ECDSA 签名 */
+    private fun operation(): JsonObject {
+        val op = buildJsonObject {
+            put("protocolVersion", 1)
+            put("groupId", P0_GROUP)
+            put("opId", "${identity.actorId}:1")
+            put("actorId", identity.actorId)
+            put("seq", 1)
+            put("context", buildJsonObject { })
+            put("taskId", UUID.randomUUID().toString())
+            put("kind", "create")
+            put("changes", buildJsonObject {
+                put("title", "P0 签名互通验证")
+                put("done", false)
+            })
+            put("recordedAt", Instant.now().toString())
+        }
+        return buildJsonObject {
+            put("type", "OPS")
+            put("protocolVersion", 1)
+            put("ops", kotlinx.serialization.json.buildJsonArray {
+                add(identity.signed(op))
+            })
+        }
+    }
 
     private fun write(output: OutputStream, message: JsonObject) {
         SyncMessages.validate(message)
@@ -103,9 +152,7 @@ class SyncClient(
         input.readFully(body)
         val message = Json.parseToJsonElement(String(body, Charsets.UTF_8)).jsonObject
         if (type(message) == "ERROR") {
-            val code = message["code"]?.jsonPrimitive?.content
-            val text = message["message"]?.jsonPrimitive?.content
-            fail("peer error $code: $text")
+            fail("peer error ${message["code"]?.jsonPrimitive?.content}: ${message["message"]?.jsonPrimitive?.content}")
         }
         return message
     }
@@ -137,5 +184,6 @@ class SyncClient(
         /** Android 模拟器访问宿主机 */
         const val EMULATOR_HOST = "10.0.2.2"
         const val P0_PORT = 47821
+        const val P0_GROUP = "p0-group"
     }
 }

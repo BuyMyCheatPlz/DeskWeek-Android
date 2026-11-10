@@ -188,9 +188,14 @@ P0 固化平台互通记录和跨语言消息样例；P2 验证正确性后，P3
 | 消息集 | HELLO/SUMMARY/WANT/OPS/ACK/CHANGED/PING/PONG/ERROR，`protocolVersion = 1` | `messages.cjs` | `SyncMessages.kt` |
 | 测试向量 | 11 条（中文、emoji、控制字符、边界整数、同步消息样例），两端必须逐字节一致 | `test/fixtures/sync-vectors.json` | 同名资源 |
 | 传输 | TLS ≥ 1.2（实测协商 1.3），自签测试证书按 SHA-256 固定指纹，禁止「接受所有证书」 | `p0-server.cjs` | `SyncClient.kt` |
+| 签名 | ECDSA P-256 + SHA-256，DER 编码后 base64；公钥 SPKI/DER，私钥 PKCS8/DER | `identity.cjs` | `SyncIdentity.kt` |
+| 被签内容 | 对象去掉 `signature` 后的规范化 JSON；HELLO 与 OPS 中的 op 同规则 | `signingBytes()` | `sign()/verify()` |
 
-**未冻结 / 未实现**：操作签名的编码细节（ECDSA P-256 与规范化的组合方式）、配对二维码与短认证码、
-mDNS 发现、操作合并与冲突记录、墓碑与 purge、seq 的持久化与崩溃恢复、后台与 Doze 调度。
+**未冻结 / 未实现**：配对二维码与短认证码、mDNS 发现、操作日志与 seq 的持久化、
+因果上下文裁剪、合并与冲突记录、墓碑与 purge、后台与 Doze 调度、密钥迁移到 Keystore。
+
+签名部分已冻结，但**信任建立仍未做**：当前原型用 HELLO 携带公钥的首次信任（TOFU），
+未实现文档 §2 的配对流程；这只是 P2 内的自洽验证，不构成安全模型。
 
 `test/fixtures/certs/` 下的私钥仅用于原型，不得用于任何正式环境。
 
