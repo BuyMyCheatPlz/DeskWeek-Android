@@ -40,7 +40,12 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import com.deskweek.android.core.sync.SyncClient
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -408,6 +413,30 @@ private fun SettingsScreen(onOpenWallpaper: () -> Unit) {
             color = MaterialTheme.colorScheme.outline,
         )
         if (status.isNotBlank()) Text(status, style = MaterialTheme.typography.labelSmall)
+
+        HorizontalDivider()
+        Text("同步（P0 实验）", style = MaterialTheme.typography.titleMedium)
+        val scope = rememberCoroutineScope()
+        OutlinedButton(onClick = {
+            status = "连接中…"
+            scope.launch {
+                status = withContext(Dispatchers.IO) {
+                    runCatching {
+                        val report = SyncClient(
+                            host = SyncClient.EMULATOR_HOST,
+                            port = SyncClient.P0_PORT,
+                            expectedSha256 = SyncClient.P0_PIN,
+                        ).handshake()
+                        "P0 互通成功 · ${report.tlsVersion} · 对端 ${report.peerActor} · PONG ${report.pongNonce}"
+                    }.getOrElse { "P0 互通失败：${it.message}" }
+                }
+            }
+        }) { Text("P0 互通自检") }
+        Text(
+            "需要宿主机运行 node scripts/serve-p0.cjs；仅验证 TLS + 帧协议 + HELLO/PING。",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.outline,
+        )
     }
 }
 

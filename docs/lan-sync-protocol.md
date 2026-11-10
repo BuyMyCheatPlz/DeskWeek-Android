@@ -176,3 +176,28 @@ data.json 只交换业务内容，保留兼容字段和未知 prefs，不含私�
 | 前台/后台/Doze/强停 | 分别验证即时、延迟及待恢复状态 |
 
 P0 固化平台互通记录和跨语言消息样例；P2 验证正确性后，P3 才把自动发现与调度开放为日常功能。平台限制的官方依据见 [实现规划](android-port-plan.md#9-官方依据)。
+
+## 10. P0 落地记录（2026-11-10）
+
+已冻结，两端各有实现与测试：
+
+| 项 | 决定 | JS | Kotlin |
+| --- | --- | --- | --- |
+| 规范化 JSON | 键按 UTF-16 码元升序；仅安全整数；只转义 `"` `\` 与 C0；拒绝未配对代理项 | `src/main/sync/canonical.cjs` | `core/sync/CanonicalJson.kt` |
+| 帧 | 4 字节无符号大端长度 + UTF-8 JSON，单帧 ≤ 1 MiB | `frame.cjs` | `FrameCodec.kt` |
+| 消息集 | HELLO/SUMMARY/WANT/OPS/ACK/CHANGED/PING/PONG/ERROR，`protocolVersion = 1` | `messages.cjs` | `SyncMessages.kt` |
+| 测试向量 | 11 条（中文、emoji、控制字符、边界整数、同步消息样例），两端必须逐字节一致 | `test/fixtures/sync-vectors.json` | 同名资源 |
+| 传输 | TLS ≥ 1.2（实测协商 1.3），自签测试证书按 SHA-256 固定指纹，禁止「接受所有证书」 | `p0-server.cjs` | `SyncClient.kt` |
+
+**未冻结 / 未实现**：操作签名的编码细节（ECDSA P-256 与规范化的组合方式）、配对二维码与短认证码、
+mDNS 发现、操作合并与冲突记录、墓碑与 purge、seq 的持久化与崩溃恢复、后台与 Doze 调度。
+
+`test/fixtures/certs/` 下的私钥仅用于原型，不得用于任何正式环境。
+
+复现互通：
+
+```bash
+# 宿主机（deepweek-andriod）
+node scripts/serve-p0.cjs 47821
+# 模拟器内：DeskWeek → 设置 → P0 互通自检
+```
