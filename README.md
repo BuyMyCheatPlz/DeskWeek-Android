@@ -13,7 +13,7 @@ Android 休眠、强行停止及后台执行限制可能延迟同步，恢复执
 | 数据（规划） | Room + DataStore，本地优先，`data.json` 与桌面版双向兼容 |
 | 同步（规划） | 三端对等局域网同步，首次配对，离线编辑后补同步 |
 | 最低版本 | Android 8.0（API 26） |
-| 状态 | **v1.1.0 已发布**：本机功能 + 同步 P2 正确性；配对/发现/后台同步未实现 — 见 [发布说明](docs/release/RELEASE_NOTES-1.0.0.md) 与 [验证报告](docs/verification-report.md) |
+| 状态 | **v1.2.0 已发布**：本机功能 + 同步 P2 正确性；配对/发现/后台同步未实现 — 见 [发布说明](docs/release/RELEASE_NOTES-1.0.0.md) 与 [验证报告](docs/verification-report.md) |
 
 ## 与上游的关系
 
@@ -39,9 +39,9 @@ Android 休眠、强行停止及后台执行限制可能延迟同步，恢复执
 | AI 总结（OpenAI 兼容） | ✅ 已实现，单测 + mock server | `app/src/test/.../AiClientTest.kt` |
 | 配对与信任表 | ✅ 已实现，6 位短码核对 | `docs/evidence/11-pairing-prompt.png` |
 | 后台同步 | ✅ WorkManager 周期任务 | `dumpsys jobscheduler` 已验证 |
-| 拖拽调天 | ⚠️ 长按改期替代，非跨列拖拽 | — |
+| 拖拽调天 | ✅ 长按拖拽 + 长按选日期两条路径 | `docs/evidence/13-move-dialog.png` |
 | 冲突解决 UI | ❌ 未实现 | 冲突仅记录在操作日志 |
-| mDNS 自动发现 | ❌ 未实现 | 手动主机/端口 |
+| mDNS 发现 | ⚠️ 已实现，模拟器无法验证（不转发组播） | `docs/evidence/14-discovery.png` |
 
 完整门禁记录见 [验证报告](docs/verification-report.md)。
 

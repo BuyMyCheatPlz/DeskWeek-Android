@@ -8,6 +8,12 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -169,6 +175,16 @@ private fun WeekScreen(
     val days = (0..6).map { monday.plusDays(it.toLong()) }
     val today = LocalDate.now()
     var moving by remember { mutableStateOf<Task?>(null) }
+    var dragTask by remember { mutableStateOf<Task?>(null) }
+    var dragPos by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    val dayBounds = remember { androidx.compose.runtime.mutableStateMapOf<String, androidx.compose.ui.geometry.Rect>() }
+
+    fun dropAt(position: androidx.compose.ui.geometry.Offset) {
+        val task = dragTask ?: return
+        val target = dayBounds.entries.firstOrNull { it.value.contains(position) }?.key ?: return
+
+        if (target != task.date) TaskRepository.update(task.copy(date = target))
+    }
 
     moving?.let { task ->
         MoveTaskDialog(
@@ -182,6 +198,7 @@ private fun WeekScreen(
         )
     }
 
+    Box(Modifier.fillMaxSize()) {
     if (wide) {
         // 平板/展开态：左侧整周导航 + 右侧当日详情
         Row(
@@ -193,6 +210,9 @@ private fun WeekScreen(
                 Spacer(Modifier.height(8.dp))
                 days.forEachIndexed { index, day ->
                     DayRow(
+                        modifier = Modifier.onGloballyPositioned {
+                            dayBounds[day.toString()] = it.boundsInRoot()
+                        },
                         day = day,
                         label = WEEKDAY_CN[index],
                         selected = day == selectedDate,
@@ -204,7 +224,13 @@ private fun WeekScreen(
             }
             Box(Modifier.width(1.dp).fillMaxHeight().background(MaterialTheme.colorScheme.outlineVariant))
             Column(Modifier.weight(0.58f)) {
-                DayTasks(selectedDate, onEdit, onPickDate = { moving = it })
+                DayTasks(
+                    selectedDate, onEdit,
+                    onPickDate = { moving = it },
+                    onDragStart = { t -> dragTask = t },
+                    onDrag = { pos -> dragPos = pos },
+                    onDragEnd = { dropAt(dragPos); dragTask = null },
+                )
             }
         }
     } else {
@@ -214,7 +240,9 @@ private fun WeekScreen(
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 days.forEachIndexed { index, day ->
                     DayCell(
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).onGloballyPositioned {
+                            dayBounds[day.toString()] = it.boundsInRoot()
+                        },
                         day = day,
                         label = WEEKDAY_CN[index],
                         selected = day == selectedDate,
@@ -226,7 +254,28 @@ private fun WeekScreen(
             }
             Spacer(Modifier.height(12.dp))
             HorizontalDivider()
-            DayTasks(selectedDate, onEdit, onPickDate = { moving = it })
+            DayTasks(
+                selectedDate, onEdit,
+                onPickDate = { moving = it },
+                onDragStart = { t -> dragTask = t },
+                onDrag = { pos -> dragPos = pos },
+                onDragEnd = { dropAt(dragPos); dragTask = null },
+            )
+        }
+    }
+
+        // 拖拽中的悬浮标签
+        dragTask?.let { task ->
+            Surface(
+                color = MaterialTheme.colorScheme.primaryContainer,
+                shape = RoundedCornerShape(8.dp),
+                shadowElevation = 6.dp,
+                modifier = Modifier
+                    .offset { IntOffset(dragPos.x.toInt() - 40, dragPos.y.toInt() - 24) }
+                    .padding(8.dp),
+            ) {
+                Text(task.title.take(10), style = MaterialTheme.typography.labelMedium)
+            }
         }
     }
 }
@@ -242,6 +291,7 @@ private fun WeekHeader(monday: LocalDate) {
 
 @Composable
 private fun DayRow(
+    modifier: Modifier = Modifier,
     day: LocalDate,
     label: String,
     selected: Boolean,
@@ -255,7 +305,7 @@ private fun DayRow(
         else -> Color.Transparent
     }
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .padding(vertical = 2.dp)
             .clip(RoundedCornerShape(10.dp))
@@ -288,7 +338,14 @@ private fun DayRow(
 }
 
 @Composable
-private fun DayTasks(selectedDate: LocalDate, onEdit: (Task) -> Unit, onPickDate: (Task) -> Unit) {
+private fun DayTasks(
+    selectedDate: LocalDate,
+    onEdit: (Task) -> Unit,
+    onPickDate: (Task) -> Unit,
+    onDragStart: (Task) -> Unit,
+    onDrag: (androidx.compose.ui.geometry.Offset) -> Unit,
+    onDragEnd: () -> Unit,
+) {
     Column(Modifier.fillMaxSize()) {
         Text(
             text = "${selectedDate.monthValue} 月 ${selectedDate.dayOfMonth} 日 · " +
@@ -306,7 +363,14 @@ private fun DayTasks(selectedDate: LocalDate, onEdit: (Task) -> Unit, onPickDate
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(tasks, key = { it.id }) { task ->
-                    TaskRow(task = task, onEdit = { onEdit(task) }, onMove = { onPickDate(task) })
+                    TaskRow(
+                        task = task,
+                        onEdit = { onEdit(task) },
+                        onMove = { onPickDate(task) },
+                        onDragStart = { onDragStart(task) },
+                        onDrag = onDrag,
+                        onDragEnd = onDragEnd,
+                    )
                 }
             }
         }
@@ -357,11 +421,35 @@ private fun DayCell(
 }
 
 @Composable
-private fun TaskRow(task: Task, onEdit: () -> Unit, onMove: (() -> Unit)? = null) {
+private fun TaskRow(
+    task: Task,
+    onEdit: () -> Unit,
+    onMove: (() -> Unit)? = null,
+    onDragStart: () -> Unit = {},
+    onDrag: (androidx.compose.ui.geometry.Offset) -> Unit = {},
+    onDragEnd: () -> Unit = {},
+) {
+    var origin by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
     Surface(
         shape = RoundedCornerShape(10.dp),
         color = MaterialTheme.colorScheme.surfaceVariant,
-        modifier = Modifier.fillMaxWidth().combinedClickable(onClick = onEdit, onLongClick = onMove),
+        modifier = Modifier
+            .fillMaxWidth()
+            .onGloballyPositioned {
+                origin = it.boundsInRoot().topLeft
+            }
+            .pointerInput(task.id) {
+                detectDragGesturesAfterLongPress(
+                    onDragStart = { onDragStart() },
+                    onDrag = { change, _ ->
+                        onDrag(origin + change.position)
+                        change.consume()
+                    },
+                    onDragEnd = { onDragEnd() },
+                    onDragCancel = { onDragEnd() },
+                )
+            }
+            .combinedClickable(onClick = onEdit, onLongClick = onMove),
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -548,6 +636,10 @@ private fun SettingsScreen(onOpenWallpaper: () -> Unit) {
         var portText by remember { mutableStateOf(syncPrefs.getInt("port", com.deskweek.android.core.sync.SyncSession.P0_PORT).toString()) }
         val scope = rememberCoroutineScope()
         val trustStore = remember { com.deskweek.android.core.sync.TrustStore(syncDir) }
+        val discovery = remember { com.deskweek.android.core.sync.NsdDiscovery(context) }
+        androidx.compose.runtime.DisposableEffect(Unit) {
+            onDispose { runCatching { discovery.stop() } }
+        }
         var pendingPeer by remember { mutableStateOf<com.deskweek.android.core.sync.SyncSession.UntrustedPeerException?>(null) }
 
         // 一次同步尝试：confirmed 为已核对过的短码，null 表示还没配对
@@ -615,6 +707,28 @@ private fun SettingsScreen(onOpenWallpaper: () -> Unit) {
             }) { Text("写入本地操作") }
 
             OutlinedButton(onClick = { runSync(null) }) { Text("立即同步") }
+
+            OutlinedButton(onClick = {
+                status = "搜索局域网…"
+                discovery.start(object : com.deskweek.android.core.sync.NsdDiscovery.Listener {
+                    override fun onFound(foundHost: String, foundPort: Int, name: String, groupId: String?) {
+                        scope.launch {
+                            host = foundHost
+                            portText = foundPort.toString()
+                            syncPrefs.edit().putString("host", foundHost).putInt("port", foundPort).apply()
+                            status = "发现 $name → $foundHost:$foundPort"
+                        }
+                    }
+
+                    override fun onLost(name: String) {
+                        scope.launch { status = "设备下线：$name" }
+                    }
+
+                    override fun onError(message: String) {
+                        scope.launch { status = message }
+                    }
+                })
+            }) { Text("搜索设备") }
 
             pendingPeer?.let { peer ->
                 OutlinedButton(onClick = { runSync(peer.sas) }) { Text("确认配对 ${peer.sas}") }
