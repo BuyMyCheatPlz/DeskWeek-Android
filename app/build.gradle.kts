@@ -20,8 +20,8 @@ android {
         applicationId = "com.deskweek.android"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "1.0.0"
+        versionCode = 4
+        versionName = "1.1.0"
     }
 
     signingConfigs {
@@ -77,6 +77,9 @@ dependencies {
     implementation(libs.androidx.glance.appwidget)
 
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.lunar)
+    implementation(libs.okhttp)
+    implementation(libs.androidx.work.runtime)
 
     testImplementation(libs.junit)
 

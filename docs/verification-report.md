@@ -19,7 +19,7 @@
 
 | # | 门禁 | 命令 | 结果 |
 | --- | --- | --- | --- |
-| G1 | Android 单元测试 | `./gradlew :app:testDebugUnitTest` | **45 / 45 通过**（8 协议 + 5 签名 + 9 合并 + 其余本地规则） |
+| G1 | Android 单元测试 | `./gradlew :app:testDebugUnitTest` | **59 / 59 通过** |
 | G2 | Android 静态检查 | `./gradlew :app:lintDebug` | **0 error**（8 warning，1 hint） |
 | G3 | 构建 | `assembleDebug` / `assembleRelease` | 13.56 MB / 9.72 MB |
 | G4 | 冒烟（安装+冷启动） | `scripts/gray-check.ps1` | **PASS**，无崩溃 |
@@ -27,7 +27,7 @@
 | G6 | 小组件上屏 | `requestPinAppWidget` + 截图 | **PASS**，7 列透明卡片，与壁纸共存（见证据 04） |
 | G7 | 数据写入与备份 | 勾选任务 → 读 `data.json` | **PASS**，`done:true` 且生成 `.backup` |
 | G8 | 桌面语法检查 | `npm run check` | **PASS** |
-| G9 | 桌面单元测试 | `node --test test/*.test.cjs` | **57 / 57 通过** |
+| G9 | 桌面单元测试 | `node --test test/*.test.cjs` | **62 / 62 通过** |
 | G10 | 主机回归 | `npm run test:host` | **HOST_REGRESSION_PASS**（14 项检查全绿） |
 | G11 | 协议向量跨语言一致 | JS `canonical.cjs` ↔ Kotlin `CanonicalJson` | **11 条向量逐字节一致** |
 | G12 | TLS 回环互通 | `node --test test/sync-tls.test.cjs` | **3 / 3 通过** |
@@ -38,6 +38,11 @@
 | G17 | **双向缺口补齐** | Android 拉取 `seed-actor` 的操作并推送本地操作 | **PASS**：拉取 1 / 推送 2 / 向量双向一致（证据 08） |
 | G18 | 自适应双栏 | 平板 2560×1600 截图 | **PASS**：左周导航 + 右当日详情（证据 09） |
 | G19 | 发布签名 | `apksigner verify --print-certs` | **PASS**：证书 `CN=DeskWeek`，非 debug key |
+| G20 | 农历跨语言 | 396 天逐日对照 JS `vendor/lunar` | **PASS**（含 3 条公历纪念日规则差已被发现并补齐） |
+| G21 | AI 客户端 | 假 transport 单测 + 本机 mock server | **PASS**：请求体/解析/围栏/非 JSON 拒绝 + 真实 HTTP |
+| G22 | 配对短码 | 5 条跨语言向量 + 信任表语义 | **PASS**：换公钥被拒、持久化、损坏恢复 |
+| G23 | 配对实测 | 未配对提示 → 核对 741514 → 同步成功 | **PASS**（证据 11/12） |
+| G24 | 后台同步注册 | `dumpsys jobscheduler` | **PASS**：WorkManager 任务注册，NET 约束、RUNNABLE |
 
 G10 覆盖的检查项（脚本自报）：preload/IPC、任务持久化、双窗口同步、主题、迷你模式恢复、
 混合 DPI 多屏移动、桌面宿主恢复注入、全屏检测、刷新暂停、草稿保护、渲染进程释放、

@@ -32,7 +32,17 @@ class SyncSession(
     private val expectedSha256: String,
     private val identity: SyncIdentity,
     private val store: SyncStore,
+    private val trust: TrustStore,
+    /** 已与用户核对过的短码；用于首次配对 */
+    private val confirmedSas: String? = null,
 ) {
+
+    /** 对端未在本机信任表里；UI 拿到短码让用户核对 */
+    class UntrustedPeerException(
+        val actorId: String,
+        val publicKeyB64: String,
+        val sas: String,
+    ) : Exception("未配对设备，验证码 $sas")
 
     data class Report(
         val tlsVersion: String,
@@ -54,6 +64,28 @@ class SyncSession(
             val reply = read(input) ?: fail("no HELLO reply")
             if (type(reply) != "HELLO") fail("expected HELLO, got ${type(reply)}")
             val peerActor = reply["actorId"]!!.jsonPrimitive.content
+
+            // 对端身份必须可验证；验证通过后要么已配对，要么用户已核对短码
+            val peerKey = reply["publicKey"]?.jsonPrimitive?.content
+                ?: fail("对端没有提供身份公钥")
+            val peerSig = reply["signature"]?.jsonPrimitive?.content
+                ?: fail("对端没有提供身份签名")
+            if (!SyncIdentity.verify(reply, peerKey, peerSig)) fail("对端身份签名无效")
+
+            val sas = TrustStore.shortAuthString(identity.publicKeyB64, peerKey)
+            if (!trust.isTrusted(peerActor, peerKey)) {
+                if (confirmedSas == null) throw UntrustedPeerException(peerActor, peerKey, sas)
+                if (confirmedSas != sas) throw UntrustedPeerException(peerActor, peerKey, sas)
+                trust.remember(
+                    TrustStore.Peer(
+                        actorId = peerActor,
+                        publicKeyB64 = peerKey,
+                        groupId = store.groupId,
+                        pairedAt = java.time.Instant.now().toString(),
+                        sas = sas,
+                    ),
+                )
+            }
 
             val summary = read(input) ?: fail("no SUMMARY")
             if (type(summary) != "SUMMARY") fail("expected SUMMARY, got ${type(summary)}")

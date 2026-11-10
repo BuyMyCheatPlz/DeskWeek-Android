@@ -3,7 +3,11 @@ package com.deskweek.android.ui
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -164,6 +168,19 @@ private fun WeekScreen(
     val monday = selectedDate.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
     val days = (0..6).map { monday.plusDays(it.toLong()) }
     val today = LocalDate.now()
+    var moving by remember { mutableStateOf<Task?>(null) }
+
+    moving?.let { task ->
+        MoveTaskDialog(
+            task = task,
+            weekStart = monday,
+            onDismiss = { moving = null },
+            onPick = { date ->
+                TaskRepository.update(task.copy(date = date))
+                moving = null
+            },
+        )
+    }
 
     if (wide) {
         // 平板/展开态：左侧整周导航 + 右侧当日详情
@@ -187,7 +204,7 @@ private fun WeekScreen(
             }
             Box(Modifier.width(1.dp).fillMaxHeight().background(MaterialTheme.colorScheme.outlineVariant))
             Column(Modifier.weight(0.58f)) {
-                DayTasks(selectedDate, onEdit)
+                DayTasks(selectedDate, onEdit, onPickDate = { moving = it })
             }
         }
     } else {
@@ -209,7 +226,7 @@ private fun WeekScreen(
             }
             Spacer(Modifier.height(12.dp))
             HorizontalDivider()
-            DayTasks(selectedDate, onEdit)
+            DayTasks(selectedDate, onEdit, onPickDate = { moving = it })
         }
     }
 }
@@ -253,6 +270,12 @@ private fun DayRow(
             style = MaterialTheme.typography.bodyLarge,
             fontWeight = if (selected || isToday) FontWeight.Bold else FontWeight.Normal,
         )
+        Text(
+            text = com.deskweek.android.core.calendar.LunarProvider.ofCached(day).shortLabel,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.outline,
+            modifier = Modifier.padding(start = 8.dp),
+        )
         Spacer(Modifier.weight(1f))
         if (count > 0) {
             Text(
@@ -265,10 +288,13 @@ private fun DayRow(
 }
 
 @Composable
-private fun DayTasks(selectedDate: LocalDate, onEdit: (Task) -> Unit) {
+private fun DayTasks(selectedDate: LocalDate, onEdit: (Task) -> Unit, onPickDate: (Task) -> Unit) {
     Column(Modifier.fillMaxSize()) {
         Text(
-            text = "${selectedDate.monthValue} 月 ${selectedDate.dayOfMonth} 日 · 待办",
+            text = "${selectedDate.monthValue} 月 ${selectedDate.dayOfMonth} 日 · " +
+                com.deskweek.android.core.calendar.LunarProvider.ofCached(selectedDate).let { info ->
+                    if (info.jieQi.isNotEmpty()) info.jieQi else "${info.monthCn}月${info.dayCn}"
+                } + " · 待办",
             style = MaterialTheme.typography.labelLarge,
             modifier = Modifier.padding(vertical = 8.dp),
         )
@@ -280,7 +306,7 @@ private fun DayTasks(selectedDate: LocalDate, onEdit: (Task) -> Unit) {
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(tasks, key = { it.id }) { task ->
-                    TaskRow(task = task, onEdit = { onEdit(task) })
+                    TaskRow(task = task, onEdit = { onEdit(task) }, onMove = { onPickDate(task) })
                 }
             }
         }
@@ -315,6 +341,13 @@ private fun DayCell(
             style = MaterialTheme.typography.titleMedium,
             fontWeight = if (selected || isToday) FontWeight.Bold else FontWeight.Normal,
         )
+        Text(
+            text = com.deskweek.android.core.calendar.LunarProvider.ofCached(day).shortLabel,
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            color = if (isToday) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+        )
         if (count > 0) {
             Box(Modifier.padding(top = 2.dp).size(6.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary))
         } else {
@@ -324,11 +357,11 @@ private fun DayCell(
 }
 
 @Composable
-private fun TaskRow(task: Task, onEdit: () -> Unit) {
+private fun TaskRow(task: Task, onEdit: () -> Unit, onMove: (() -> Unit)? = null) {
     Surface(
         shape = RoundedCornerShape(10.dp),
         color = MaterialTheme.colorScheme.surfaceVariant,
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onEdit),
+        modifier = Modifier.fillMaxWidth().combinedClickable(onClick = onEdit, onLongClick = onMove),
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -409,7 +442,10 @@ private fun SettingsScreen(onOpenWallpaper: () -> Unit) {
     var dark by remember { mutableStateOf(prefs.getBoolean(DeskWeekWallpaperService.KEY_DARK, false)) }
     var status by remember { mutableStateOf("") }
 
-    Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
         Text("外观", style = MaterialTheme.typography.titleMedium)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Column { Text("壁纸深色模式"); Text("仅影响壁纸配色，不改系统主题", style = MaterialTheme.typography.labelSmall) }
@@ -496,6 +532,9 @@ private fun SettingsScreen(onOpenWallpaper: () -> Unit) {
         if (status.isNotBlank()) Text(status, style = MaterialTheme.typography.labelSmall)
 
         HorizontalDivider()
+        AiSection()
+
+        HorizontalDivider()
         Text("同步", style = MaterialTheme.typography.titleMedium)
         val syncDir = remember { java.io.File(context.filesDir, "sync") }
         val syncStore = remember { com.deskweek.android.core.sync.SyncStore(syncDir) }
@@ -508,28 +547,47 @@ private fun SettingsScreen(onOpenWallpaper: () -> Unit) {
         }
         var portText by remember { mutableStateOf(syncPrefs.getInt("port", com.deskweek.android.core.sync.SyncSession.P0_PORT).toString()) }
         val scope = rememberCoroutineScope()
+        val trustStore = remember { com.deskweek.android.core.sync.TrustStore(syncDir) }
+        var pendingPeer by remember { mutableStateOf<com.deskweek.android.core.sync.SyncSession.UntrustedPeerException?>(null) }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(
-                value = host,
-                onValueChange = {
-                    host = it
-                    syncPrefs.edit().putString("host", it).apply()
-                },
-                label = { Text("主机") },
-                singleLine = true,
-                modifier = Modifier.weight(1f),
-            )
-            OutlinedTextField(
-                value = portText,
-                onValueChange = {
-                    portText = it.filter(Char::isDigit)
-                    portText.toIntOrNull()?.let { port -> syncPrefs.edit().putInt("port", port).apply() }
-                },
-                label = { Text("端口") },
-                singleLine = true,
-                modifier = Modifier.width(110.dp),
-            )
+        // 一次同步尝试：confirmed 为已核对过的短码，null 表示还没配对
+        val runSync: (String?) -> Unit = { confirmed ->
+            status = "同步中…"
+            pendingPeer = null
+            scope.launch {
+                status = withContext(Dispatchers.IO) {
+                    val port = portText.toIntOrNull() ?: com.deskweek.android.core.sync.SyncSession.P0_PORT
+                    var lastError: String? = null
+                    var result: String? = null
+                    for (attempt in 1..3) {
+                        val outcome = runCatching {
+                            com.deskweek.android.core.sync.SyncSession(
+                                host = host,
+                                port = port,
+                                expectedSha256 = com.deskweek.android.core.sync.SyncSession.P0_PIN,
+                                identity = syncIdentity,
+                                store = syncStore,
+                                trust = trustStore,
+                                confirmedSas = confirmed,
+                            ).run()
+                        }
+                        val failure = outcome.exceptionOrNull()
+                        if (outcome.isSuccess) {
+                            val r = outcome.getOrThrow()
+                            result = "同步完成 · 第 $attempt 次 · ${r.tlsVersion} · 拉取 ${r.pulled} 条 · " +
+                                "推送 ${r.pushed} 条 · 向量 ${r.vectors}"
+                            break
+                        }
+                        if (failure is com.deskweek.android.core.sync.SyncSession.UntrustedPeerException) {
+                            pendingPeer = failure
+                            return@withContext "未配对设备 · 请核对验证码 ${failure.sas}，确认后再次同步"
+                        }
+                        lastError = failure?.message
+                        if (attempt < 3) Thread.sleep(400L * attempt)
+                    }
+                    result ?: "同步失败（已重试 3 次）：$lastError"
+                }
+            }
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -556,43 +614,50 @@ private fun SettingsScreen(onOpenWallpaper: () -> Unit) {
                 }
             }) { Text("写入本地操作") }
 
-            OutlinedButton(onClick = {
-                status = "同步中…"
-                scope.launch {
-                    status = withContext(Dispatchers.IO) {
-                        val port = portText.toIntOrNull() ?: com.deskweek.android.core.sync.SyncSession.P0_PORT
-                        var lastError: String? = null
-                        var result: String? = null
-                        // 最多重试 3 次，退避 400ms/800ms；失败保留原因
-                        for (attempt in 1..3) {
-                            val outcome = runCatching {
-                                com.deskweek.android.core.sync.SyncSession(
-                                    host = host,
-                                    port = port,
-                                    expectedSha256 = com.deskweek.android.core.sync.SyncSession.P0_PIN,
-                                    identity = syncIdentity,
-                                    store = syncStore,
-                                ).run()
-                            }
-                            if (outcome.isSuccess) {
-                                val r = outcome.getOrThrow()
-                                result = "同步完成 · 第 $attempt 次 · ${r.tlsVersion} · 拉取 ${r.pulled} 条 · " +
-                                    "推送 ${r.pushed} 条 · 向量 ${r.vectors}"
-                                break
-                            }
-                            lastError = outcome.exceptionOrNull()?.message
-                            if (attempt < 3) Thread.sleep(400L * attempt)
-                        }
-                        result ?: "同步失败（已重试 3 次）：$lastError"
-                    }
-                }
-            }) { Text("立即同步") }
+            OutlinedButton(onClick = { runSync(null) }) { Text("立即同步") }
+
+            pendingPeer?.let { peer ->
+                OutlinedButton(onClick = { runSync(peer.sas) }) { Text("确认配对 ${peer.sas}") }
+            }
         }
         Text("需宿主机运行 node scripts/serve-p0.cjs；验证 TLS + 帧 + ECDSA 签名 + 缺口补齐。",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.outline,
         )
     }
+}
+
+@Composable
+private fun MoveTaskDialog(
+    task: Task,
+    weekStart: LocalDate,
+    onDismiss: () -> Unit,
+    onPick: (String) -> Unit,
+) {
+    val days = (0..6).map { weekStart.plusDays(it.toLong()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("把「${task.title.take(12)}」移到") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                days.forEachIndexed { index, day ->
+                    TextButton(
+                        onClick = { onPick(day.toString()) },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            "${WEEKDAY_CN[index]}  ${day.monthValue} 月 ${day.dayOfMonth} 日" +
+                                if (day.toString() == task.date) "（当前）" else "",
+                        )
+                    }
+                }
+                TextButton(onClick = { onPick("") }, modifier = Modifier.fillMaxWidth()) {
+                    Text("移到「无日期」")
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
 }
 
 @Composable

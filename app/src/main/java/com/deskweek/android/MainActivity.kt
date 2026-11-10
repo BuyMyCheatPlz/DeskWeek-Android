@@ -22,6 +22,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         TaskRepository.init(applicationContext)
+        runCatching { com.deskweek.android.core.sync.SyncWorker.ensureScheduled(applicationContext) }
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
