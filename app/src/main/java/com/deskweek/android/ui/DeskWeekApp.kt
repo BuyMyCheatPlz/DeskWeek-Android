@@ -42,10 +42,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import com.deskweek.android.core.sync.SyncClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.put
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -415,29 +416,57 @@ private fun SettingsScreen(onOpenWallpaper: () -> Unit) {
         if (status.isNotBlank()) Text(status, style = MaterialTheme.typography.labelSmall)
 
         HorizontalDivider()
-        Text("同步（P0 实验）", style = MaterialTheme.typography.titleMedium)
+        Text("同步（P2 实验）", style = MaterialTheme.typography.titleMedium)
+        val syncDir = remember { java.io.File(context.filesDir, "sync") }
+        val syncStore = remember { com.deskweek.android.core.sync.SyncStore(syncDir) }
+        val syncIdentity = remember { com.deskweek.android.core.sync.SyncIdentity.loadOrCreate(syncDir) }
         val scope = rememberCoroutineScope()
-        OutlinedButton(onClick = {
-            status = "连接中…"
-            scope.launch {
-                status = withContext(Dispatchers.IO) {
-                    runCatching {
-                        val identity = com.deskweek.android.core.sync.SyncIdentity
-                            .loadOrCreate(java.io.File(context.filesDir, "sync"))
-                        val report = SyncClient(
-                            host = SyncClient.EMULATOR_HOST,
-                            port = SyncClient.P0_PORT,
-                            expectedSha256 = SyncClient.P0_PIN,
-                            identity = identity,
-                        ).handshake()
-                        "互通成功 · ${report.tlsVersion} · 对端 ${report.peerActor} · " +
-                            "ACK ${report.ackVectors} · 签名已校验"
-                    }.getOrElse { "互通失败：${it.message}" }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = {
+                status = "写入本地操作…"
+                scope.launch {
+                    status = withContext(Dispatchers.IO) {
+                        runCatching {
+                            val op = syncStore.log.nextOp(
+                                actorId = syncIdentity.actorId,
+                                taskId = java.util.UUID.randomUUID().toString(),
+                                kind = "create",
+                                changes = kotlinx.serialization.json.buildJsonObject {
+                                    put("title", JsonPrimitive("本机操作 ${syncStore.allOps().size + 1}"))
+                                    put("date", JsonPrimitive(LocalDate.now().toString()))
+                                    put("createdAt", JsonPrimitive(java.time.Instant.now().toString()))
+                                },
+                                recordedAt = java.time.Instant.now().toString(),
+                            )
+                            syncStore.receive(listOf(syncIdentity.signed(op)))
+                            "已写入本地操作，共 ${syncStore.allOps().size} 条"
+                        }.getOrElse { "写入失败：${it.message}" }
+                    }
                 }
-            }
-        }) { Text("P0/P2 互通自检") }
+            }) { Text("写入本地操作") }
+
+            OutlinedButton(onClick = {
+                status = "同步中…"
+                scope.launch {
+                    status = withContext(Dispatchers.IO) {
+                        runCatching {
+                            val report = com.deskweek.android.core.sync.SyncSession(
+                                host = com.deskweek.android.core.sync.SyncSession.EMULATOR_HOST,
+                                port = com.deskweek.android.core.sync.SyncSession.P0_PORT,
+                                expectedSha256 = com.deskweek.android.core.sync.SyncSession.P0_PIN,
+                                identity = syncIdentity,
+                                store = syncStore,
+                            ).run()
+                            "同步完成 · ${report.tlsVersion} · 拉取 ${report.pulled} 条 · 推送 ${report.pushed} 条 · " +
+                                "向量 ${report.vectors}"
+                        }.getOrElse { "同步失败：${it.message}" }
+                    }
+                }
+            }) { Text("立即同步") }
+        }
         Text(
-            "需要宿主机运行 node scripts/serve-p0.cjs；验证 TLS + 帧协议 + ECDSA 签名操作。",
+            "需宿主机运行 node scripts/serve-p0.cjs；验证 TLS + 帧 + ECDSA 签名 + 缺口补齐。",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.outline,
         )

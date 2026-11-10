@@ -187,9 +187,12 @@ P0 固化平台互通记录和跨语言消息样例；P2 验证正确性后，P3
 | 帧 | 4 字节无符号大端长度 + UTF-8 JSON，单帧 ≤ 1 MiB | `frame.cjs` | `FrameCodec.kt` |
 | 消息集 | HELLO/SUMMARY/WANT/OPS/ACK/CHANGED/PING/PONG/ERROR，`protocolVersion = 1` | `messages.cjs` | `SyncMessages.kt` |
 | 测试向量 | 11 条（中文、emoji、控制字符、边界整数、同步消息样例），两端必须逐字节一致 | `test/fixtures/sync-vectors.json` | 同名资源 |
-| 传输 | TLS ≥ 1.2（实测协商 1.3），自签测试证书按 SHA-256 固定指纹，禁止「接受所有证书」 | `p0-server.cjs` | `SyncClient.kt` |
+| 传输 | TLS ≥ 1.2（实测协商 1.3），自签测试证书按 SHA-256 固定指纹，禁止「接受所有证书」 | `p0-server.cjs` | `SyncSession.kt` |
 | 签名 | ECDSA P-256 + SHA-256，DER 编码后 base64；公钥 SPKI/DER，私钥 PKCS8/DER | `identity.cjs` | `SyncIdentity.kt` |
 | 被签内容 | 对象去掉 `signature` 后的规范化 JSON；HELLO 与 OPS 中的 op 同规则 | `signingBytes()` | `sign()/verify()` |
+| 操作日志 | 唯一键 (actorId, seq)；重复幂等；乱序缓冲；向量 = 连续已应用 seq | `oplog.cjs` | `OpLog.kt` |
+| 合并 | 字段组原子合并；trash 优先于并发 restore；purge 终结；同日按 taskId 升序分色 | `Projection` | `Projection` |
+| 补齐 | SUMMARY → WANT(from,to) → OPS → ACK | `p0-server` | `SyncSession.kt` |
 
 **未冻结 / 未实现**：配对二维码与短认证码、mDNS 发现、操作日志与 seq 的持久化、
 因果上下文裁剪、合并与冲突记录、墓碑与 purge、后台与 Doze 调度、密钥迁移到 Keystore。
@@ -199,7 +202,7 @@ P0 固化平台互通记录和跨语言消息样例；P2 验证正确性后，P3
 
 `test/fixtures/certs/` 下的私钥仅用于原型，不得用于任何正式环境。
 
-复现互通：
+复现：`node scripts/serve-p0.cjs 47821` 后，在 App 设置页点「写入本地操作」与「立即同步」。
 
 ```bash
 # 宿主机（deepweek-andriod）

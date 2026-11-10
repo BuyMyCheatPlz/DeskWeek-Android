@@ -23,7 +23,7 @@ object SyncMessages {
     val KINDS = setOf("create", "patch", "trash", "restore", "purge", "resolve")
 
     private val CHANGE_TEXT_FIELDS =
-        setOf("title", "detail", "date", "time", "defer", "completedAt", "deletedAt")
+        setOf("title", "detail", "date", "time", "defer", "completedAt", "deletedAt", "createdAt")
     private val CHANGE_BOOL_FIELDS = setOf("done", "deleted")
 
     fun validate(message: JsonObject) {
