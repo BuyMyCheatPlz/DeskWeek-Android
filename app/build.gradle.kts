@@ -20,8 +20,9 @@ android {
         applicationId = "com.deskweek.android"
         minSdk = 26
         targetSdk = 36
-        versionCode = 5
-        versionName = "1.2.0"
+        versionCode = 6
+        versionName = "1.3.0"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     signingConfigs {
@@ -36,6 +37,10 @@ android {
     }
 
     buildTypes {
+        debug {
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+        }
         release {
             isMinifyEnabled = false
             isShrinkResources = false
@@ -82,6 +87,11 @@ dependencies {
     implementation(libs.androidx.work.runtime)
 
     testImplementation(libs.junit)
+    androidTestImplementation(platform(libs.compose.bom))
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    androidTestImplementation("androidx.test:runner:1.7.0")
+    androidTestImplementation("androidx.test.ext:junit:1.3.0")
+    androidTestImplementation("androidx.test.espresso:espresso-intents:3.7.0")
 
     debugImplementation(libs.compose.ui.tooling)
 }

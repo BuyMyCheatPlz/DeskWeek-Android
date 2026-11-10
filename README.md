@@ -1,77 +1,105 @@
-# DeskWeek · Android
+# DeskWeek · Android 手机与平板端
 
-[DeskWeek](https://github.com/EasonGuuu/Deskweek) 的 Android 原生版：周历 + 待办，手机与平板通用。
+<p align="center">
+  <img src="app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" width="96" alt="DeskWeek Android Icon">
+</p>
 
-Android 采用**透明主屏周历小组件**（Glance）与完整管理 App，保留现有壁纸，可与 Wallpaper Engine 等动态壁纸共存。
-规划支持 Windows、Android 手机、Android 平板首次配对后的局域网自动发现与双向同步，不依赖云服务或电脑常开；保留 `data.json` 导入导出。
+DeskWeek 是一款专为 Android 打造的桌面周历与待办清单工具，手机与平板均可完美使用。
 
-Android 休眠、强行停止及后台执行限制可能延迟同步，恢复执行后补齐，不承诺进程停止时仍能即时同步。
+你可以把它作为一个安静又直观的**桌面透明小组件**，无需打开 App，在手机桌面上就能随时看本周日程、直接点击打勾完成任务；也可以打开主应用，轻松管理长远待办与灵感备忘。所有数据默认保存在本地，纯净、快速、无广告。
 
-| | |
-| --- | --- |
-| 技术栈 | Kotlin + Jetpack Compose + Material 3 Adaptive |
-| 数据（规划） | Room + DataStore，本地优先，`data.json` 与桌面版双向兼容 |
-| 同步（规划） | 三端对等局域网同步，首次配对，离线编辑后补同步 |
-| 最低版本 | Android 8.0（API 26） |
-| 状态 | **v1.2.0 已发布**：本机功能 + 同步 P2 正确性；配对/发现/后台同步未实现 — 见 [发布说明](docs/release/RELEASE_NOTES-1.0.0.md) 与 [验证报告](docs/verification-report.md) |
+---
 
-## 与上游的关系
+## ✨ 核心特性
 
-- 上游：[EasonGuuu/Deskweek](https://github.com/EasonGuuu/Deskweek)（Electron + Win32，MIT）
-- 本仓库：独立原生实现，从上游 fork 的 `main` 起步，对齐业务规则、交换格式与同步协议
-- 目标支持桌面版 `data/data.json` 导入和兼容导出；当前已按该格式读写本地数据（含原子写与 `.backup` 恢复）
-- 桌面端也需要增加同步模块，当前上游版本尚不具备局域网同步能力
+- **桌面周历小组件**
+  - **全透明背景**：完美融入你的手机壁纸，不遮挡桌面背景图。
+  - **深浅文字自适应**：支持根据壁纸明暗随心切换浅色或深色文字，阅读舒适清晰。
+  - **桌面直接交互**：桌面小组件上直接点击即可完成待办，任务更新即刻同步刷新。
+  - **自适应多种尺寸**：从小号今日摘要，到中大号完整周历，适配多种桌面排版。
 
-## 当前实现状态
+- **周历与日程管理**
+  - **周视图一眼尽览**：按周排列任务，清晰掌握本周每天的轻重缓急。
+  - **拖拽轻松改期**：长按任务直接拖动到指定日期即可完成改期，也可以点击弹窗选择日期。
+  - **灵活排序与规则**：支持按到期时间、创建顺序排列，支持设置提前几天在待办中出现。
+  - **误删恢复保障**：支持废纸篓机制，误删随时可一键还原。
 
-| 能力 | 状态 | 证据 |
-| --- | --- | --- |
-| 透明周历小组件（首版主形态） | ✅ 已实现 | `docs/evidence/04-widget.png` |
-| 主程序周视图 / 清单 / 编辑 | ✅ 已实现 | `docs/evidence/03-app-with-data.png` |
-| `data.json` 兼容读写 + 原子写 + 备份恢复 | ✅ 已实现，45 条单测 | `app/src/test/` |
-| 导入 / 导出 | ✅ 逻辑+单测；UI 未端到端点击验证 | `TaskStoreTest` |
-| 动态壁纸形态（实验） | ✅ 可运行，**非首版形态** | `docs/evidence/02-icons-on-top.png` |
-| 同步协议 **P0**：规范化 JSON / 帧 / 消息 / TLS 握手 | ✅ 两端实现 + 11 条共享向量 + 跨进程互通 | `docs/evidence/06-p0-sync.png` |
-| 同步 **P2 正确性**：操作日志 / 幂等 / 缺口补齐 / 合并 / 墓碑 | ✅ 两端实现 + 11 个跨语言场景 + 双向补齐实测 | `docs/evidence/08-p2-catchup.png` |
-| 同步 **P3**：配对、mDNS 发现、后台调度、冲突解决 UI | ❌ 未实现 | 协议文档 §8 阶段表 |
-| 自适应双栏（平板） | ✅ 已实现 | `docs/evidence/09-adaptive.png` |
-| 农历 / 节气 / 节日 | ✅ 已实现，396 天跨语言对照 | `docs/evidence/10-lunar-ui.png` |
-| AI 总结（OpenAI 兼容） | ✅ 已实现，单测 + mock server | `app/src/test/.../AiClientTest.kt` |
-| 配对与信任表 | ✅ 已实现，6 位短码核对 | `docs/evidence/11-pairing-prompt.png` |
-| 后台同步 | ✅ WorkManager 周期任务 | `dumpsys jobscheduler` 已验证 |
-| 拖拽调天 | ✅ 长按拖拽 + 长按选日期两条路径 | `docs/evidence/13-move-dialog.png` |
-| 冲突解决 UI | ❌ 未实现 | 冲突仅记录在操作日志 |
-| mDNS 发现 | ⚠️ 已实现，模拟器无法验证（不转发组播） | `docs/evidence/14-discovery.png` |
+- **农历、节气与节假日**
+  - 内置离线农历算法，公历、农历双对照。
+  - 自动标注二十四节气与法定节假日，方便安排休假与传统节日日程。
 
-完整门禁记录见 [验证报告](docs/verification-report.md)。
+- **可选 AI 智能待办提取**
+  - 支持粘贴整段会议记录、聊天记录或工作备忘，AI 自动为你提炼拆解出清晰的待办事项。
+  - 提取出的待办支持预览和一键批量添加。
+  - API 密钥由 Android 系统内置安全芯片（Android Keystore）高强度加密存储，绝不泄露。
 
-## 构建
+- **本地数据与跨端互通**
+  - **数据本地自主**：所有日程保存在手机本地存储中，不强制登录，不上传第三方服务器。
+  - **电脑端无缝互通**：支持与 Windows 电脑版 DeskWeek 的 `data.json` 互相导入导出。
+  - **防损坏与备份**：保存时采用安全原子写入机制，并自动留存最近备份，避免异常断电丢失日程。
 
-已验证的工具链组合：
+- **局域网多设备互联**
+  - 内置局域网自动发现功能，在同一个 Wi-Fi 网络下即可互相找到设备，正在持续完善电脑与移动端之间的离线增量互通。
 
-| 组件 | 版本 |
-| --- | --- |
-| JDK | 21（Temurin 21.0.13） |
-| Gradle | 9.9.0（含 wrapper） |
-| AGP | 9.5.1（**Kotlin 支持已内置，不需要 `kotlin-android` 插件**） |
-| Kotlin | 2.4.21（经 AGP 内置） |
-| compileSdk / targetSdk / minSdk | 37 / 36 / 26 |
-| SDK Platform | `platforms/android-37.2`（另装 `android-36` 备用）、`build-tools/36.0.0` |
+---
 
-```bash
-./gradlew assembleDebug
-```
+## 📱 下载与安装
 
-需要 `local.properties` 指向本机 SDK（该文件不入库）：
+你可以在 [GitHub Releases](https://github.com/BuyMyCheatPlz/DeskWeek-Android/releases/latest) 下载最新发布的 APK 安装包：
 
-```properties
-sdk.dir=C\:\\path\\to\\Android\\Sdk
-```
+- **安装方法**：下载 `DeskWeek-v1.3.0.apk` 后，在手机或平板上直接打开安装即可。
+- **覆盖升级**：后续新版本使用相同签名打包，直接安装即可平滑升级，**原有日程数据完全保留**。
 
-> 国内网络提示：`services.gradle.org` 走 307 重定向时经常超时，可把
-> `gradle/wrapper/gradle-wrapper.properties` 里的 `distributionUrl` 换成
-> `https://mirrors.cloud.tencent.com/gradle/gradle-9.9.0-bin.zip`。
+---
 
-## 许可
+## 📖 相关文档
 
-MIT，见 [LICENSE](LICENSE)。原项目版权归 小虾 所有。
+- [功能测试与体验指南](docs/acceptance-checklist.md)：快速了解如何体验小组件、任务管理、AI 提取与跨端文件互通。
+- [版本更新与验证报告](docs/verification-report.md)：详细记录当前版本的修复项、性能优化与测试验证结果。
+- [版本规划与设计思路](docs/android-port-plan.md)：Android 端的产品定位、多尺寸屏幕适配及后续规划。
+- [局域网同步协议设计说明](docs/lan-sync-protocol.md)：局域网设备发现与端到端协同设计的技术说明。
+
+---
+
+## 💻 开发者编译与构建
+
+如果你想自行编译或参与开发，请参考以下指南：
+
+### 环境要求
+- **JDK**：21
+- **Android SDK**：API 36 / 37
+- **Gradle**：9.9.0（项目已内置 Gradle Wrapper）
+
+### 编译步骤
+
+1. 在项目根目录创建 `local.properties` 并配置 Android SDK 路径：
+   ```properties
+   sdk.dir=C\:\\Users\\YourUsername\\AppData\\Local\\Android\\Sdk
+   ```
+
+2. 运行单元测试：
+   ```bash
+   ./gradlew testDebugUnitTest
+   ```
+
+3. 打包 APK 安装包：
+   ```bash
+   # 打包正式版 APK（生成于 app/build/outputs/apk/release/app-release.apk）
+   ./gradlew assembleRelease
+
+   # 打包测试版 APK（生成于 app/build/outputs/apk/debug/app-debug.apk）
+   ./gradlew assembleDebug
+   ```
+
+---
+
+## 🤝 与 Windows 桌面版的关系
+
+- Windows 桌面版开源项目：[EasonGuuu/Deskweek](https://github.com/EasonGuuu/Deskweek)
+- Android 移动端与 Windows 桌面版共享统一的数据交换格式（`data.json`），你可以在两端之间随时导出并导入自己的任务日程。
+
+---
+
+## 📄 开源许可
+
+本项目采用 [MIT 许可证](LICENSE)。原项目版权归 小虾 所有。

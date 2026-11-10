@@ -7,6 +7,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
+import org.junit.Assert.assertThrows
 import org.junit.Test
 import java.security.MessageDigest
 
@@ -15,6 +16,10 @@ import java.security.MessageDigest
  * 只要两端有一边的规范化实现漂移，这里就会失败。
  */
 class SyncProtocolTest {
+
+    @Test fun `unsigned high bit frame length is rejected as a protocol error`() {
+        assertThrows(ProtocolException::class.java) { FrameCodec.decode(byteArrayOf(0x80.toByte(), 0, 0, 1)) }
+    }
 
     private val vectors: JsonObject by lazy {
         val stream = javaClass.classLoader!!.getResourceAsStream("sync-vectors.json")
@@ -125,6 +130,8 @@ class SyncProtocolTest {
             """{"type":"OPS","protocolVersion":1,"ops":[]}""" to "ECONTRACT",
             """{"type":"WANT","protocolVersion":1,"actorId":"a","from":5,"to":4}""" to "ECONTRACT",
             """{"type":"ACK","protocolVersion":1,"vectors":{"a":-1}}""" to "ECONTRACT",
+            """{"type":"ACK","protocolVersion":"1","vectors":{"a":1}}""" to "EPROTO",
+            """{"type":"ACK","protocolVersion":1,"vectors":{"a":"1"}}""" to "ECONTRACT",
         )
         for ((json, code) in cases) {
             try {

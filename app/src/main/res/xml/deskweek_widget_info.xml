@@ -8,6 +8,6 @@
     android:targetCellHeight="2"
     android:minResizeWidth="110dp"
     android:minResizeHeight="40dp"
-    android:updatePeriodMillis="0"
+    android:updatePeriodMillis="1800000"
     android:resizeMode="horizontal|vertical"
     android:widgetCategory="home_screen" />

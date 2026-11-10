@@ -7,6 +7,19 @@ import org.junit.Test
 import java.time.LocalDate
 
 class TaskRulesTest {
+    @Test fun `time only task uses local day instead of UTC timestamp day`() {
+        val task = TaskRules.normalize(Task("local-day", "morning", time = "08:00"),
+            "2026-11-09T23:30:00Z", LocalDate.of(2026, 11, 10))
+        assertEquals("2026-11-10", task.date)
+    }
+    @Test fun `color reconciliation matches desktop creation order and ignores trash`() {
+        val old = task(id = "old", date = "2026-11-10", createdAt = "2026-11-01T00:00:00Z")
+        val recent = task(id = "new", date = "2026-11-10", createdAt = "2026-11-02T00:00:00Z")
+        val deleted = task(id = "deleted", date = "2026-11-10").copy(deleted = true)
+        val result = TaskRules.reconcileColors(listOf(deleted, recent, old)).associateBy { it.id }
+        assertEquals(Task.DEFAULT_COLORS[0], result.getValue("old").color)
+        assertEquals(Task.DEFAULT_COLORS[1], result.getValue("new").color)
+    }
 
     private val today = LocalDate.of(2026, 11, 9)
 

@@ -1,31 +1,16 @@
 package com.deskweek.android.core.sync
 
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.buildJsonArray
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.long
-import kotlinx.serialization.json.put
 import java.io.DataInputStream
 import java.io.OutputStream
 import java.net.InetSocketAddress
-import java.net.SocketTimeoutException
 import java.security.MessageDigest
 import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
-import javax.net.ssl.SSLContext
-import javax.net.ssl.SSLSocket
-import javax.net.ssl.X509TrustManager
+import java.util.UUID
+import javax.net.ssl.*
+import kotlinx.serialization.json.*
 
-/**
- * P2 同步会话：签名 HELLO → HELLO/SUMMARY → 缺口 WANT/OPS → 推送本地 OPS → ACK。
- *
- * 证书按 SHA-256 固定；只信任指纹匹配的叶证书。
- * 不含配对（信任仍是 TOFU）与 mDNS 发现。
- */
+/** Experimental protocol client. This exchanges operation history, not the task repository. */
 class SyncSession(
     private val host: String,
     private val port: Int,
@@ -33,186 +18,112 @@ class SyncSession(
     private val identity: SyncIdentity,
     private val store: SyncStore,
     private val trust: TrustStore,
-    /** 已与用户核对过的短码；用于首次配对 */
     private val confirmedSas: String? = null,
 ) {
-
-    /** 对端未在本机信任表里；UI 拿到短码让用户核对 */
-    class UntrustedPeerException(
-        val actorId: String,
-        val publicKeyB64: String,
-        val sas: String,
-    ) : Exception("未配对设备，验证码 $sas")
-
-    data class Report(
-        val tlsVersion: String,
-        val peerActor: String,
-        val pulled: Int,
-        val pushed: Int,
-        val vectors: Map<String, Long>,
-    )
+    class UntrustedPeerException(val actorId: String, val publicKeyB64: String, val sas: String) : Exception("未配对设备，验证码 $sas")
+    data class Report(val tlsVersion: String, val peerActor: String, val pulled: Int, val pushed: Int, val vectors: Map<String, Long>)
 
     fun run(timeoutMs: Int = 8000): Report {
+        require(host.isNotBlank() && port in 1..65535) { "请输入有效的主机和端口" }
+        require(expectedSha256.matches(Regex("[0-9a-fA-F]{64}"))) { "证书指纹必须为 64 位十六进制 SHA-256" }
         val socket = connect(timeoutMs)
-        try {
-            socket.soTimeout = timeoutMs
-            val output: OutputStream = socket.outputStream
-            val input = DataInputStream(socket.inputStream)
-
-            write(output, identity.signed(hello()))
-
-            val reply = read(input) ?: fail("no HELLO reply")
-            if (type(reply) != "HELLO") fail("expected HELLO, got ${type(reply)}")
-            val peerActor = reply["actorId"]!!.jsonPrimitive.content
-
-            // 对端身份必须可验证；验证通过后要么已配对，要么用户已核对短码
-            val peerKey = reply["publicKey"]?.jsonPrimitive?.content
-                ?: fail("对端没有提供身份公钥")
-            val peerSig = reply["signature"]?.jsonPrimitive?.content
-                ?: fail("对端没有提供身份签名")
-            if (!SyncIdentity.verify(reply, peerKey, peerSig)) fail("对端身份签名无效")
-
+        socket.use {
+            val input = DataInputStream(it.inputStream)
+            val output = it.outputStream
+            write(output, identity.signed(message("HELLO") {
+                put("groupId", store.groupId); put("actorId", identity.actorId)
+                put("publicKey", identity.publicKeyB64); put("nonce", UUID.randomUUID().toString())
+                put("capabilities", buildJsonArray { add("ops"); add("tls") })
+            }))
+            val hello = read(input, "HELLO")
+            if (hello["groupId"]!!.jsonPrimitive.content != store.groupId) fail("对端数据集不匹配")
+            val peerActor = hello["actorId"]!!.jsonPrimitive.content
+            if (peerActor == identity.actorId) fail("不能与克隆的本机身份同步")
+            val peerKey = hello["publicKey"]?.jsonPrimitive?.content ?: fail("缺少对端公钥")
+            val signature = hello["signature"]?.jsonPrimitive?.content ?: fail("缺少对端身份签名")
+            if (!SyncIdentity.verify(hello, peerKey, signature)) fail("对端身份签名无效")
+            val known = trust.get(peerActor)
+            if (known != null && (known.publicKeyB64 != peerKey || known.groupId != store.groupId)) fail("对端身份或数据集已变化，请移除旧配对后重试")
             val sas = TrustStore.shortAuthString(identity.publicKeyB64, peerKey)
-            if (!trust.isTrusted(peerActor, peerKey)) {
-                if (confirmedSas == null) throw UntrustedPeerException(peerActor, peerKey, sas)
+            if (known == null) {
                 if (confirmedSas != sas) throw UntrustedPeerException(peerActor, peerKey, sas)
-                trust.remember(
-                    TrustStore.Peer(
-                        actorId = peerActor,
-                        publicKeyB64 = peerKey,
-                        groupId = store.groupId,
-                        pairedAt = java.time.Instant.now().toString(),
-                        sas = sas,
-                    ),
-                )
+                trust.remember(TrustStore.Peer(peerActor, peerKey, store.groupId, java.time.Instant.now().toString(), sas))
             }
-
-            val summary = read(input) ?: fail("no SUMMARY")
-            if (type(summary) != "SUMMARY") fail("expected SUMMARY, got ${type(summary)}")
-            val remoteVectors = (summary["vectors"] as JsonObject)
-                .mapValues { it.value.jsonPrimitive.long }
-
-            // 1) 补齐本地缺的远端操作
+            val remoteVectors = read(input, "SUMMARY")["vectors"]!!.jsonObject.mapValues { it.value.jsonPrimitive.long }
             var pulled = 0
-            for ((actorId, remoteSeq) in remoteVectors) {
-                val localSeq = store.vectors()[actorId] ?: 0L
-                if (remoteSeq <= localSeq) continue
-                write(output, want(actorId, localSeq + 1, remoteSeq))
-                val opsMessage = read(input) ?: continue
-                if (type(opsMessage) == "OPS") {
-                    val ops = (opsMessage["ops"] as JsonArray).map { it.jsonObject }
-                    pulled += store.receive(ops)
+            remoteVectors.forEach { (actor, remoteSeq) ->
+                var from = (store.vectors()[actor] ?: 0L) + 1
+                while (from <= remoteSeq) {
+                    val to = minOf(remoteSeq, from + SyncMessages.MAX_OPS - 1)
+                    write(output, message("WANT") { put("actorId", actor); put("from", from); put("to", to) })
+                    val batch = read(input, "OPS")["ops"]!!.jsonArray.map { op -> op.jsonObject }
+                    batch.forEach { op ->
+                        if (op["actorId"]!!.jsonPrimitive.content != actor || op["seq"]!!.jsonPrimitive.long !in from..to) fail("对端返回了请求范围之外的操作")
+                        val author = trust.get(actor) ?: fail("操作原作者尚未配对：$actor")
+                        if (author.groupId != store.groupId || !SyncIdentity.verify(op, author.publicKeyB64, op["signature"]!!.jsonPrimitive.content)) fail("远端操作签名无效")
+                    }
+                    val sequences = batch.map { op -> op["seq"]!!.jsonPrimitive.long }.toSet()
+                    if ((from..to).any { seq -> seq !in sequences }) fail("对端未返回完整操作区间")
+                    pulled += store.receive(batch)
+                    from = to + 1
                 }
             }
-
-            // 2) 把本地全部操作推给对端（对端按 (actor,seq) 幂等去重）
-            val localOps = store.allOps()
+            if (remoteVectors.any { (actor, seq) -> (store.vectors()[actor] ?: 0L) < seq }) fail("仍有未补齐的因果依赖")
             var pushed = 0
-            if (localOps.isNotEmpty()) {
-                localOps.chunked(SyncMessages.MAX_OPS).forEach { batch ->
-                    write(output, opsMessage(batch))
-                    val ack = read(input) ?: return@forEach
-                    if (type(ack) == "ACK") pushed += batch.size
-                }
+            val missing = store.log.allOps().filter { op ->
+                op["seq"]!!.jsonPrimitive.long > (remoteVectors[op["actorId"]!!.jsonPrimitive.content] ?: 0L)
             }
-
-            return Report(
-                tlsVersion = socket.session.protocol,
-                peerActor = peerActor,
-                pulled = pulled,
-                pushed = pushed,
-                vectors = store.vectors(),
-            )
-        } finally {
-            runCatching { socket.close() }
+            missing.chunked(SyncMessages.MAX_OPS).forEach { batch ->
+                write(output, message("OPS") { put("ops", JsonArray(batch)) })
+                val vectors = read(input, "ACK")["vectors"]!!.jsonObject
+                if (batch.any { op -> (vectors[op["actorId"]!!.jsonPrimitive.content]?.jsonPrimitive?.long ?: 0L) < op["seq"]!!.jsonPrimitive.long }) fail("对端尚未持久化发送的操作")
+                pushed += batch.size
+            }
+            return Report(it.session.protocol, peerActor, pulled, pushed, store.vectors())
         }
     }
-
     private fun connect(timeoutMs: Int): SSLSocket {
         val context = SSLContext.getInstance("TLS")
         context.init(null, arrayOf(PinnedTrust(expectedSha256)), null)
-        val raw = context.socketFactory.createSocket() as SSLSocket
-        raw.connect(InetSocketAddress(host, port), timeoutMs)
-        raw.startHandshake()
-        return raw
+        val socket = context.socketFactory.createSocket() as SSLSocket
+        try {
+            socket.soTimeout = timeoutMs
+            socket.connect(InetSocketAddress(host, port), timeoutMs)
+            socket.startHandshake()
+            return socket
+        } catch (e: Exception) { socket.close(); throw e }
     }
-
-    private fun hello(): JsonObject = buildJsonObject {
-        put("type", "HELLO")
-        put("protocolVersion", 1)
-        put("groupId", store.groupId)
-        put("actorId", identity.actorId)
-        put("nonce", "android-hello")
-        put("capabilities", buildJsonArray {
-            add(kotlinx.serialization.json.JsonPrimitive("ops"))
-            add(kotlinx.serialization.json.JsonPrimitive("tls"))
-        })
-        put("publicKey", identity.publicKeyB64)
+    private fun message(type: String, content: JsonObjectBuilder.() -> Unit) = buildJsonObject {
+        put("type", type); put("protocolVersion", SyncMessages.VERSION); content()
     }
-
-    private fun want(actorId: String, from: Long, to: Long): JsonObject = buildJsonObject {
-        put("type", "WANT")
-        put("protocolVersion", 1)
-        put("actorId", actorId)
-        put("from", from)
-        put("to", to)
-    }
-
-    private fun opsMessage(ops: List<JsonObject>): JsonObject = buildJsonObject {
-        put("type", "OPS")
-        put("protocolVersion", 1)
-        put("ops", buildJsonArray { ops.forEach { add(it) } })
-    }
-
     private fun write(output: OutputStream, message: JsonObject) {
         SyncMessages.validate(message)
-        output.write(FrameCodec.encode(message))
-        output.flush()
+        output.write(FrameCodec.encode(message)); output.flush()
     }
-
-    /** 超时返回 null，让调用方跳过该轮补齐而不是卡死 */
-    private fun read(input: DataInputStream): JsonObject? {
-        return try {
-            val header = ByteArray(4)
-            input.readFully(header)
-            val length = ((header[0].toInt() and 0xFF) shl 24) or
-                ((header[1].toInt() and 0xFF) shl 16) or
-                ((header[2].toInt() and 0xFF) shl 8) or
-                (header[3].toInt() and 0xFF)
-            if (length <= 0 || length > FrameCodec.MAX_FRAME) fail("bad frame length $length")
-            val body = ByteArray(length)
-            input.readFully(body)
-            val message = Json.parseToJsonElement(String(body, Charsets.UTF_8)).jsonObject
-            if (type(message) == "ERROR") {
-                fail("peer error ${message["code"]?.jsonPrimitive?.content}: ${message["message"]?.jsonPrimitive?.content}")
-            }
-            message
-        } catch (e: SocketTimeoutException) {
-            null
-        }
+    private fun read(input: DataInputStream, expected: String): JsonObject {
+        // Timeout/partial frame ends the session. Continuing would lose framing and fake success.
+        val size = input.readInt()
+        if (size !in 1..FrameCodec.MAX_FRAME) fail("invalid frame length")
+        val bytes = ByteArray(size); input.readFully(bytes)
+        val header = byteArrayOf((size ushr 24).toByte(), (size ushr 16).toByte(), (size ushr 8).toByte(), size.toByte())
+        val reply = FrameCodec.decode(header + bytes).messages.single()
+        SyncMessages.validate(reply)
+        if (reply["type"]!!.jsonPrimitive.content == "ERROR") fail("对端拒绝：${reply["code"]!!.jsonPrimitive.content}")
+        if (reply["type"]!!.jsonPrimitive.content != expected) fail("expected $expected")
+        return reply
     }
-
-    private fun type(message: JsonObject): String = message["type"]!!.jsonPrimitive.content
-
     private fun fail(message: String): Nothing = throw ProtocolException("EP2", message)
-
-    private class PinnedTrust(private val expectedSha256: String) : X509TrustManager {
-        override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
-
+    private class PinnedTrust(private val expected: String) : X509TrustManager {
+        override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) { throw CertificateException("client authentication not supported here") }
         override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
-            val leaf = chain?.firstOrNull() ?: throw CertificateException("no server certificate")
-            val digest = MessageDigest.getInstance("SHA-256").digest(leaf.encoded)
-            val actual = digest.joinToString("") { "%02x".format(it) }
-            if (!actual.equals(expectedSha256, ignoreCase = true)) {
-                throw CertificateException("certificate pin mismatch")
-            }
+            val leaf = chain?.firstOrNull() ?: throw CertificateException("no certificate")
+            leaf.checkValidity()
+            val pin = MessageDigest.getInstance("SHA-256").digest(leaf.encoded).joinToString("") { "%02x".format(it) }
+            if (!pin.equals(expected, ignoreCase = true)) throw CertificateException("certificate pin mismatch")
         }
-
         override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
     }
-
     companion object {
-        /** P0 测试证书指纹，见 test/fixtures/certs/pin.txt（仅原型使用） */
         const val P0_PIN = "d54bd32e7ab8b3e23906698d4d8a9f0b24535482908612490667065ef162c76e"
         const val EMULATOR_HOST = "10.0.2.2"
         const val P0_PORT = 47821

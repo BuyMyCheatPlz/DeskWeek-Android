@@ -15,6 +15,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.TimeUnit
+import com.deskweek.android.core.model.TaskRules
 
 /** AI 配置，与桌面端「管理中心 → 设置 → AI 总结」字段对应 */
 data class AiConfig(
@@ -50,7 +51,7 @@ class OkHttpTransport(
             .post(body.toRequestBody("application/json".toMediaType()))
         headers.forEach { (k, v) -> builder.header(k, v) }
         client.newCall(builder.build()).execute().use { response ->
-            val text = response.body?.string() ?: ""
+            val text = response.body.string()
             if (!response.isSuccessful) {
                 throw IllegalStateException("HTTP ${response.code}: ${text.take(200)}")
             }
@@ -95,9 +96,11 @@ class AiClient(private val transport: HttpTransport = OkHttpTransport()) {
             body = body,
         )
 
-        val content = Json.parseToJsonElement(raw).jsonObject["choices"]!!
-            .jsonArray[0].jsonObject["message"]!!.jsonObject["content"]!!
-            .jsonPrimitive.content
+        val root = runCatching { Json.parseToJsonElement(raw) as? JsonObject }.getOrNull()
+        val choice = (root?.get("choices") as? JsonArray)?.firstOrNull() as? JsonObject
+        val response = choice?.get("message") as? JsonObject
+        val content = (response?.get("content") as? kotlinx.serialization.json.JsonPrimitive)
+            ?.takeIf { it.isString }?.content ?: throw IllegalStateException("接口未返回可用的待办内容")
 
         return parseDrafts(content)
     }
@@ -113,13 +116,14 @@ class AiClient(private val transport: HttpTransport = OkHttpTransport()) {
         val array = element as? JsonArray ?: throw IllegalStateException("模型返回的不是数组")
         return array.mapNotNull { item ->
             val obj = item as? JsonObject ?: return@mapNotNull null
-            val title = obj["title"]?.jsonPrimitive?.content?.trim().orEmpty()
+            fun text(key: String) = (obj[key] as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content.orEmpty()
+            val title = text("title").trim()
             if (title.isEmpty()) return@mapNotNull null
             TaskDraft(
                 title = title.take(100),
-                date = obj["date"]?.jsonPrimitive?.content.orEmpty().takeIf { it.length == 10 }.orEmpty(),
-                time = obj["time"]?.jsonPrimitive?.content.orEmpty().takeIf { it.length == 5 }.orEmpty(),
-                detail = obj["detail"]?.jsonPrimitive?.content.orEmpty().take(4000),
+                date = text("date").takeIf { TaskRules.isValidDateKey(it) }.orEmpty(),
+                time = text("time").takeIf { TaskRules.isValidTime(it) }.orEmpty(),
+                detail = text("detail").take(4000),
             )
         }
     }
@@ -140,5 +144,3 @@ class AiClient(private val transport: HttpTransport = OkHttpTransport()) {
                 "time（HH:mm，可空）、detail（可空）。不要输出解释或 Markdown。"
     }
 }
-
-

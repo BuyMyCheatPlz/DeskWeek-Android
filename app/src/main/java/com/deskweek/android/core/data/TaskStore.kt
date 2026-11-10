@@ -3,6 +3,7 @@ package com.deskweek.android.core.data
 import com.deskweek.android.core.model.StoreData
 import com.deskweek.android.core.model.Task
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.*
 import java.io.File
 import java.io.FileOutputStream
 import java.nio.file.Files
@@ -29,7 +30,6 @@ class TaskStore(
         val DEFAULT_JSON = Json {
             ignoreUnknownKeys = true
             encodeDefaults = true
-            isLenient = true
         }
     }
 
@@ -43,7 +43,7 @@ class TaskStore(
         val loadError: String? = null,
     )
 
-    fun load(): LoadResult {
+    @Synchronized fun load(): LoadResult {
         var damaged = false
 
         runCatching {
@@ -59,7 +59,7 @@ class TaskStore(
                     val corrupt = File(dir, "$FILE_NAME.corrupt-${System.currentTimeMillis()}")
                     runCatching { file.copyTo(corrupt, overwrite = true) }
                 }
-                save(data)
+                writeAtomic(file, encode(data))
                 return LoadResult(data, recoveredFromBackup = true)
             }.onFailure { damaged = true }
         }
@@ -73,36 +73,40 @@ class TaskStore(
     /** 解析并归一化；结构非法直接抛异常，由调用方交给 load() 的恢复逻辑 */
     fun parse(text: String): StoreData {
         if (text.isBlank()) throw IllegalArgumentException("empty store")
-        val raw = json.decodeFromString<StoreData>(text)
-        if (raw.items.any { it.id.isBlank() || it.title.isBlank() && it.title != "未命名事项" }) {
-            // 与桌面版一致：id/title 是硬性要求，缺了就是坏文件
-            if (raw.items.any { it.id.isBlank() }) throw IllegalArgumentException("invalid item: missing id")
-        }
+        val root = json.parseToJsonElement(text) as? JsonObject
+            ?: throw IllegalArgumentException("任务文件必须是 JSON 对象")
+        val array = root["items"] as? JsonArray
+            ?: throw IllegalArgumentException("任务文件缺少 items 数组")
+        val raw = json.decodeFromJsonElement(StoreData.serializer(), root)
+        require(raw.revision >= 0) { "invalid revision" }
         val ids = HashSet<String>()
-        val items = raw.items.map { item ->
+        val items = raw.items.mapIndexed { index, item ->
+            require(item.id.isNotBlank() && ids.add(item.id)) { "任务 ID 缺失或重复" }
             val normalized = com.deskweek.android.core.model.TaskRules.normalize(
                 item,
                 java.time.Instant.now().toString(),
             )
-            // ID 重复时重新生成，避免后续按 id 查找串台
-            if (!ids.add(normalized.id)) normalized.copy(id = java.util.UUID.randomUUID().toString())
-            else normalized
+            normalized.copy(extraFields = JsonObject(array[index].jsonObject.filterKeys { it !in TASK_FIELDS }))
         }
-        return raw.copy(items = items)
+        return raw.copy(items = items, extraFields = JsonObject(root.filterKeys { it !in STORE_FIELDS }))
     }
 
     /**
      * 保存并返回新版本。保存前把当前主文件滚成备份，
      * 且只有备份本身可解析时才覆盖旧备份（防止把坏文件写成"好备份"）。
      */
-    fun save(data: StoreData): StoreData {
+    @Synchronized fun save(data: StoreData): StoreData {
         dir.mkdirs()
+        val current = load()
+        check(current.loadError == null) { "数据及备份损坏，已阻止覆盖；请先恢复文件" }
+        require(data.items.map { it.id }.toSet().size == data.items.size) { "任务 ID 重复" }
         val payload = data.copy(
             initialized = true,
-            revision = data.revision + 1,
+            revision = Math.addExact(current.data.revision, 1),
             updatedAt = java.time.Instant.now().toString(),
         )
-        val text = json.encodeToString(StoreData.serializer(), payload)
+        val text = encode(payload)
+        parse(text)
 
         if (file.exists()) {
             runCatching { parse(file.readText(Charsets.UTF_8)) }.onSuccess {
@@ -113,16 +117,29 @@ class TaskStore(
         return payload
     }
 
-    fun exportTo(target: File): File {
-        val current = load().data
+    @Synchronized fun exportTo(target: File): File {
+        val result = load()
+        check(result.loadError == null) { "数据损坏，不能导出为空文件" }
+        val current = result.data
         target.parentFile?.mkdirs()
-        writeAtomic(target, json.encodeToString(StoreData.serializer(), current))
+        writeAtomic(target, encode(current))
         return target
     }
 
-    fun importFrom(source: File, merge: Boolean = false): StoreData {
+    @Synchronized fun importFrom(source: File, merge: Boolean = false): StoreData {
         val incoming = parse(source.readText(Charsets.UTF_8))
-        val current = load().data
+        val result = load()
+        if (result.loadError != null) {
+            check(!merge) { "当前数据损坏，请选择替换导入恢复" }
+            val stamp = System.currentTimeMillis()
+            listOf(file, backupFile).filter { it.exists() }.forEach { damaged ->
+                damaged.copyTo(File(dir, "${damaged.name}.corrupt-$stamp"), overwrite = false)
+            }
+            val restored = incoming.copy(initialized = true, revision = 1, updatedAt = java.time.Instant.now().toString())
+            writeAtomic(file, encode(restored))
+            return restored
+        }
+        val current = result.data
         val merged = if (!merge) {
             incoming
         } else {
@@ -132,6 +149,16 @@ class TaskStore(
         }
         return save(merged)
     }
+
+    private fun encode(data: StoreData): String {
+        val known = json.encodeToJsonElement(StoreData.serializer(), data).jsonObject
+        return JsonObject(data.extraFields + known + ("items" to JsonArray(data.items.map { task ->
+            JsonObject(task.extraFields + json.encodeToJsonElement(Task.serializer(), task).jsonObject)
+        }))).toString()
+    }
+
+    private val TASK_FIELDS = setOf("id", "title", "detail", "date", "time", "done", "completedAt", "deleted", "deletedAt", "color", "defer", "createdAt")
+    private val STORE_FIELDS = setOf("initialized", "items", "prefs", "revision", "updatedAt")
 
     private fun writeAtomic(target: File, text: String) {
         target.parentFile?.mkdirs()
@@ -147,7 +174,7 @@ class TaskStore(
                 StandardCopyOption.REPLACE_EXISTING,
                 StandardCopyOption.ATOMIC_MOVE,
             )
-        } catch (e: Exception) {
+        } catch (e: java.nio.file.AtomicMoveNotSupportedException) {
             // 某些文件系统不支持 ATOMIC_MOVE，退化为普通替换
             Files.move(tmp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
         }

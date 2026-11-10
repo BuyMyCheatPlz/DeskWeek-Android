@@ -5,9 +5,12 @@ import com.deskweek.android.core.model.Task
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonArray
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertThrows
 import org.junit.Test
 import java.io.File
 import java.nio.file.Files
@@ -172,7 +175,7 @@ class TaskStoreTest {
     }
 
     @Test
-    fun `duplicate ids are regenerated on load`() {
+    fun `duplicate ids reject the file instead of changing task identities`() {
         val dir = tempDir()
         val store = TaskStore(dir)
         store.file.writeText(
@@ -181,9 +184,7 @@ class TaskStoreTest {
                {"id":"dup","title":"B","createdAt":"2026-11-01T00:00:00Z"}],
                "prefs":{},"revision":1,"updatedAt":""}""",
         )
-        val items = store.load().data.items
-        assertEquals(2, items.size)
-        assertEquals(2, items.map { it.id }.toSet().size)
+        assertEquals("unreadable-or-invalid", store.load().loadError)
     }
 
     @Test
@@ -192,5 +193,47 @@ class TaskStoreTest {
         val store = TaskStore(dir)
         store.save(StoreData(items = listOf(sample())))
         assertFalse(File(dir, "data.json.tmp").exists())
+    }
+
+    @Test fun `unrelated JSON import cannot erase tasks`() {
+        val store = TaskStore(tempDir())
+        store.save(StoreData(items = listOf(sample())))
+        val incoming = File(tempDir(), "not-tasks.json").apply { writeText("{}") }
+        assertThrows(IllegalArgumentException::class.java) { store.importFrom(incoming) }
+        assertEquals("买菜", store.load().data.items.single().title)
+    }
+
+    @Test fun `unrecoverable data cannot be overwritten or exported as empty`() {
+        val store = TaskStore(tempDir())
+        store.file.writeText("broken-primary")
+        store.backupFile.writeText("broken-backup")
+        assertThrows(IllegalStateException::class.java) { store.save(StoreData()) }
+        assertThrows(IllegalStateException::class.java) { store.exportTo(File(tempDir(), "out.json")) }
+        assertEquals("broken-primary", store.file.readText())
+    }
+
+    @Test fun `unknown task and root fields survive editing and export`() {
+        val store = TaskStore(tempDir())
+        val input = """{"items":[{"id":"a","title":"old","futureTask":{"x":1}}],"futureRoot":"keep"}"""
+        val data = store.parse(input)
+        store.save(data.copy(items = data.items.map { it.copy(title = "new") }))
+        val exported = Json.parseToJsonElement(store.exportTo(File(tempDir(), "out.json")).readText()).jsonObject
+        assertEquals("keep", exported["futureRoot"]!!.jsonPrimitive.content)
+        assertEquals("1", exported["items"]!!.jsonArray.single().jsonObject["futureTask"]!!.jsonObject["x"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun `import uses local monotonically increasing revision`() {
+        val store = TaskStore(tempDir())
+        repeat(3) { store.save(store.load().data) }
+        val incoming = File(tempDir(), "in.json").apply { writeText("""{"items":[],"revision":0}""") }
+        assertEquals(4, store.importFrom(incoming).revision)
+    }
+    @Test fun `explicit valid replacement recovers damaged data without losing evidence`() {
+        val store = TaskStore(tempDir())
+        store.file.writeText("damaged"); store.backupFile.writeText("damaged-backup")
+        val source = File(tempDir(), "restore.json").apply { writeText("""{"items":[{"id":"restore","title":"recovered"}]}""") }
+        store.importFrom(source)
+        assertEquals("recovered", store.load().data.items.single().title)
+        assertTrue(store.file.parentFile!!.listFiles()!!.any { it.name.startsWith("data.json.corrupt-") })
     }
 }

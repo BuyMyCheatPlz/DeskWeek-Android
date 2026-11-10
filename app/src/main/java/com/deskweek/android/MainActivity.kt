@@ -14,13 +14,18 @@ import com.deskweek.android.widget.DeskWeekWidget
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import androidx.lifecycle.lifecycleScope
+import androidx.activity.enableEdgeToEdge
+import androidx.activity.SystemBarStyle
 
 class MainActivity : ComponentActivity() {
 
-    private val scope = CoroutineScope(Dispatchers.Main.immediate)
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
+        )
         TaskRepository.init(applicationContext)
         runCatching { com.deskweek.android.core.sync.SyncWorker.ensureScheduled(applicationContext) }
         setContent {
@@ -35,6 +40,6 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         // 小组件不会自动跟着本地文件变化，回到前台时刷新一次
-        scope.launch { runCatching { DeskWeekWidget().updateAll(applicationContext) } }
+        lifecycleScope.launch { runCatching { DeskWeekWidget().updateAll(applicationContext) } }
     }
 }

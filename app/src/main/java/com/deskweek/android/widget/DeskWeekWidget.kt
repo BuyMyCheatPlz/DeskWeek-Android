@@ -2,6 +2,8 @@ package com.deskweek.android.widget
 
 import android.content.Context
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
@@ -62,6 +64,8 @@ class DeskWeekWidget : GlanceAppWidget() {
         private val INK_DIM = Color(0x99202020)
         private val ACCENT = Color(0xFF2F6F5E)
         private val SURFACE = Color(0xECF6F5F2)
+        private data class Ink(val text: Color, val dim: Color)
+        private val LocalInk = staticCompositionLocalOf { Ink(INK, INK_DIM) }
 
         private val SMALL = DpSize(110.dp, 40.dp)
         private val MEDIUM = DpSize(180.dp, 110.dp)
@@ -79,7 +83,11 @@ class DeskWeekWidget : GlanceAppWidget() {
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         TaskRepository.init(context)
-        provideContent { WidgetBody(loadSnapshot()) }
+        val snapshot = loadSnapshot()
+        val transparent = context.getSharedPreferences("deskweek_widget", Context.MODE_PRIVATE).getBoolean("transparent", false)
+        val lightText = context.getSharedPreferences("deskweek_widget", Context.MODE_PRIVATE).getBoolean("lightText", true)
+        val ink = if (transparent && lightText) Ink(Color.White, Color(0xDDFFFFFF)) else Ink(INK, INK_DIM)
+        provideContent { CompositionLocalProvider(LocalInk provides ink) { WidgetBody(snapshot, transparent) } }
     }
 
     private fun loadSnapshot(): Snapshot {
@@ -93,61 +101,66 @@ class DeskWeekWidget : GlanceAppWidget() {
         days.forEach { day ->
             val key = day.toString()
             val sorted = TaskRules.sortTasks(grouped[key].orEmpty(), today)
-            byDate[key] = sorted.take(3)
+            byDate[key] = sorted
             if (sorted.size > 3) overflow[key] = sorted.size - 3
         }
         return Snapshot(today, days, byDate, overflow)
     }
 
     @Composable
-    private fun WidgetBody(snapshot: Snapshot) {
+    private fun WidgetBody(snapshot: Snapshot, transparent: Boolean) {
+        val background = if (transparent) ColorProvider(Color.Transparent) else ColorProvider(SURFACE)
         val size = LocalSize.current
         when {
-            size.width < 160.dp -> SmallBody(snapshot)
-            size.width < 220.dp -> MediumBody(snapshot)
-            else -> LargeBody(snapshot)
+            size.width < 240.dp -> SmallBody(snapshot, background)
+            size.width < 480.dp -> MediumBody(snapshot, background)
+            else -> LargeBody(snapshot, background)
         }
     }
 
     @Composable
-    private fun SmallBody(snapshot: Snapshot) {
+    private fun SmallBody(snapshot: Snapshot, background: ColorProvider) {
         val todayKey = snapshot.today.toString()
         val tasks = snapshot.byDate[todayKey].orEmpty()
-        Column(modifier = GlanceModifier.fillMaxSize().background(ColorProvider(SURFACE)).cornerRadius(16.dp).padding(8.dp)) {
+        Column(modifier = GlanceModifier.fillMaxSize().background(background).cornerRadius(16.dp).padding(8.dp)) {
             Row(verticalAlignment = Alignment.Vertical.CenterVertically) {
                 Text(
                     text = "${snapshot.today.monthValue}/${snapshot.today.dayOfMonth}",
                     style = TextStyle(
                         fontWeight = FontWeight.Bold,
-                        color = ColorProvider(INK),
+                        color = ColorProvider(LocalInk.current.text),
                     ),
                 )
                 Spacer(modifier = GlanceModifier.width(6.dp))
                 Text(text = "还剩 ${tasks.count { !it.done }} 项", style = dimStyle())
             }
             tasks.take(2).forEach { TaskLine(it) }
+            if (tasks.size > 2) Text("还有 ${tasks.size - 2} 项", modifier = GlanceModifier.clickable(actionStartActivity(MainActivity::class.java)), style = dimStyle())
             if (tasks.isEmpty()) Text(text = "今天空着", style = dimStyle())
         }
     }
 
     @Composable
-    private fun MediumBody(snapshot: Snapshot) {
+    private fun MediumBody(snapshot: Snapshot, background: ColorProvider) {
         val colWidth = (LocalSize.current.width - 16.dp) / 7
-        Column(modifier = GlanceModifier.fillMaxSize().background(ColorProvider(SURFACE)).cornerRadius(16.dp).padding(8.dp)) {
+        Column(modifier = GlanceModifier.fillMaxSize().background(background).cornerRadius(16.dp).padding(8.dp)) {
             Header(snapshot)
             Spacer(modifier = GlanceModifier.height(6.dp))
             Row(modifier = GlanceModifier.fillMaxWidth()) {
                 snapshot.weekDays.forEach { day ->
-                    DayColumn(day, snapshot, GlanceModifier.width(colWidth), compact = true)
+                    Text(if (day == snapshot.today) "今" else day.dayOfMonth.toString(), modifier = GlanceModifier.width(colWidth), style = dimStyle())
                 }
             }
+            val todayTasks = snapshot.byDate[snapshot.today.toString()].orEmpty()
+            todayTasks.take(3).forEach { TaskLine(it) }
+            if (todayTasks.size > 3) Text("还有 ${todayTasks.size - 3} 项", modifier = GlanceModifier.clickable(actionStartActivity(MainActivity::class.java)), style = dimStyle())
         }
     }
 
     @Composable
-    private fun LargeBody(snapshot: Snapshot) {
+    private fun LargeBody(snapshot: Snapshot, background: ColorProvider) {
         val colWidth = (LocalSize.current.width - 20.dp) / 7
-        Column(modifier = GlanceModifier.fillMaxSize().background(ColorProvider(SURFACE)).cornerRadius(16.dp).padding(10.dp)) {
+        Column(modifier = GlanceModifier.fillMaxSize().background(background).cornerRadius(16.dp).padding(10.dp)) {
             Header(snapshot)
             Spacer(modifier = GlanceModifier.height(8.dp))
             Row(modifier = GlanceModifier.fillMaxWidth()) {
@@ -167,7 +180,7 @@ class DeskWeekWidget : GlanceAppWidget() {
         ) {
             Text(
                 text = "${start.monthValue} 月",
-                style = TextStyle(fontWeight = FontWeight.Bold, color = ColorProvider(INK)),
+                style = TextStyle(fontWeight = FontWeight.Bold, color = ColorProvider(LocalInk.current.text)),
             )
             Spacer(modifier = GlanceModifier.width(6.dp))
             Text(
@@ -194,12 +207,13 @@ class DeskWeekWidget : GlanceAppWidget() {
                 text = if (isToday) "今" else "${day.dayOfMonth}",
                 style = TextStyle(
                     fontWeight = if (isToday) FontWeight.Bold else FontWeight.Normal,
-                    color = if (isToday) ColorProvider(ACCENT) else ColorProvider(INK_DIM),
+                    color = if (isToday) ColorProvider(ACCENT) else ColorProvider(LocalInk.current.dim),
                 ),
             )
             tasks.take(if (compact) 1 else 3).forEach { TaskLine(it, dense = compact) }
-            snapshot.overflow[key]?.let {
-                Text(text = "+$it", style = dimStyle())
+            val hidden = tasks.size - if (compact) 1 else 3
+            if (hidden > 0) {
+                Text(text = "+$hidden", modifier = GlanceModifier.clickable(actionStartActivity(MainActivity::class.java)), style = dimStyle())
             }
         }
     }
@@ -207,9 +221,10 @@ class DeskWeekWidget : GlanceAppWidget() {
     @Composable
     private fun TaskLine(task: Task, dense: Boolean = false) {
         Text(
-            text = "·${task.title.take(2)}",
+            text = (if (task.done) "☑ " else "☐ ") + task.title,
+            maxLines = 1,
             style = TextStyle(
-                color = if (task.done) ColorProvider(INK_DIM) else ColorProvider(INK),
+                color = if (task.done) ColorProvider(LocalInk.current.dim) else ColorProvider(LocalInk.current.text),
             ),
             modifier = GlanceModifier
                 .clickable(actionRunCallback<ToggleDoneAction>(actionParametersOf(TASK_ID to task.id))),
@@ -217,7 +232,7 @@ class DeskWeekWidget : GlanceAppWidget() {
     }
 
     @Composable
-    private fun dimStyle() = TextStyle(color = ColorProvider(INK_DIM))
+    private fun dimStyle() = TextStyle(color = ColorProvider(LocalInk.current.dim))
 }
 
 /** 点任务勾选：先落本地库，再刷新所有组件实例 */

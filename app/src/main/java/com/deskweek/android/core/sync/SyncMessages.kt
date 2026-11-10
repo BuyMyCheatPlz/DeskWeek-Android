@@ -18,6 +18,7 @@ object SyncMessages {
     const val MAX_TEXT = 4096
     const val MAX_ID = 128
     const val MAX_OPS = 100
+    const val MAX_SAFE_SEQ = 9007199254740991L
 
     val TYPES = setOf("HELLO", "SUMMARY", "WANT", "OPS", "ACK", "CHANGED", "PING", "PONG", "ERROR")
     val KINDS = setOf("create", "patch", "trash", "restore", "purge", "resolve")
@@ -31,7 +32,7 @@ object SyncMessages {
             ?: throw ProtocolException("ECONTRACT", "message must have a string type")
         if (type !in TYPES) throw ProtocolException("ECONTRACT", "unknown message type: $type")
 
-        val version = (message["protocolVersion"] as? JsonPrimitive)?.intOrNull
+        val version = (message["protocolVersion"] as? JsonPrimitive)?.takeUnless { it.isString }?.intOrNull
         if (version != VERSION) throw ProtocolException("EPROTO", "unsupported protocolVersion: $version")
 
         when (type) {
@@ -68,6 +69,10 @@ object SyncMessages {
 
     fun validateOp(element: JsonElement) {
         val op = element as? JsonObject ?: throw ProtocolException("ECONTRACT", "op must be an object")
+        val version = op["protocolVersion"] as? JsonPrimitive
+        if (version == null || version.isString || version.intOrNull != VERSION) {
+            throw ProtocolException("EPROTO", "unsupported operation version")
+        }
 
         val actorId = requireId(op, "actorId")
         val seq = requireSeq(op, "seq")
@@ -91,7 +96,7 @@ object SyncMessages {
                 in CHANGE_TEXT_FIELDS -> if (!primitive.isString) {
                     throw ProtocolException("ECONTRACT", "op.changes.$field must be a string")
                 }
-                in CHANGE_BOOL_FIELDS -> if (primitive.booleanOrNull == null) {
+                in CHANGE_BOOL_FIELDS -> if (primitive.isString || primitive.booleanOrNull == null) {
                     throw ProtocolException("ECONTRACT", "op.changes.$field must be boolean")
                 }
                 else -> throw ProtocolException("ECONTRACT", "op.changes unknown field: $field")
@@ -99,8 +104,10 @@ object SyncMessages {
         }
 
         requireVectors(op, "context")
+        val ownContext = (op["context"] as JsonObject)[actorId]?.let { (it as JsonPrimitive).longOrNull } ?: 0
+        if (ownContext >= seq) throw ProtocolException("ECONTRACT", "operation depends on its own future")
         requireText(op, "recordedAt")
-        requireText(op, "signature")
+        if (requireText(op, "signature").isBlank()) throw ProtocolException("ECONTRACT", "missing signature")
     }
 
     private fun requireId(obj: JsonObject, field: String): String {
@@ -122,9 +129,9 @@ object SyncMessages {
     }
 
     private fun requireSeq(obj: JsonObject, field: String): Long {
-        val value = (obj[field] as? JsonPrimitive)?.longOrNull
+        val value = (obj[field] as? JsonPrimitive)?.takeUnless { it.isString }?.longOrNull
             ?: throw ProtocolException("ECONTRACT", "$field must be a non-negative integer")
-        if (value < 0) throw ProtocolException("ECONTRACT", "$field must be a non-negative integer")
+        if (value < 0 || value > MAX_SAFE_SEQ) throw ProtocolException("ECONTRACT", "$field must be a safe non-negative integer")
         return value
     }
 
@@ -135,9 +142,9 @@ object SyncMessages {
             if (key.isEmpty() || key.length > MAX_ID) {
                 throw ProtocolException("ECONTRACT", "$field key must be a non-empty id")
             }
-            val value = (raw as? JsonPrimitive)?.longOrNull
+            val value = (raw as? JsonPrimitive)?.takeUnless { it.isString }?.longOrNull
                 ?: throw ProtocolException("ECONTRACT", "$field.$key must be a non-negative integer")
-            if (value < 0) throw ProtocolException("ECONTRACT", "$field.$key must be a non-negative integer")
+            if (value < 0 || value > MAX_SAFE_SEQ) throw ProtocolException("ECONTRACT", "$field.$key must be a safe non-negative integer")
         }
     }
 }

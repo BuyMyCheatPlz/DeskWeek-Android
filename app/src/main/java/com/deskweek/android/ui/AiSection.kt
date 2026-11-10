@@ -19,10 +19,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import com.deskweek.android.core.ai.ApiKeyStorage
 import com.deskweek.android.core.ai.AiClient
 import com.deskweek.android.core.ai.AiConfig
 import com.deskweek.android.core.ai.TaskDraft
 import com.deskweek.android.core.data.TaskRepository
+import com.deskweek.android.core.model.Task
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -37,16 +40,19 @@ import kotlinx.coroutines.withContext
 fun AiSection() {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("deskweek_ai", android.content.Context.MODE_PRIVATE) }
+    val keyStorage = remember { ApiKeyStorage(context) }
     var baseUrl by remember { mutableStateOf(prefs.getString("baseUrl", "https://api.openai.com/v1") ?: "") }
     var model by remember { mutableStateOf(prefs.getString("model", "gpt-4o-mini") ?: "") }
-    var apiKey by remember { mutableStateOf(prefs.getString("apiKey", "") ?: "") }
+    var apiKey by remember { mutableStateOf(runCatching { keyStorage.read() }.getOrDefault("")) }
     var source by remember { mutableStateOf("") }
     var status by remember { mutableStateOf("") }
     var drafts by remember { mutableStateOf<List<TaskDraft>>(emptyList()) }
+    var busy by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     fun save() {
-        prefs.edit().putString("baseUrl", baseUrl).putString("model", model).putString("apiKey", apiKey).apply()
+        prefs.edit().putString("baseUrl", baseUrl).putString("model", model).apply()
+        runCatching { keyStorage.write(apiKey) }.onFailure { status = "密钥保存失败，请重试" }
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -70,6 +76,7 @@ fun AiSection() {
                 value = apiKey,
                 onValueChange = { apiKey = it; save() },
                 label = { Text("API Key") },
+                visualTransformation = PasswordVisualTransformation(),
                 singleLine = true,
                 modifier = Modifier.weight(1f),
             )
@@ -82,9 +89,10 @@ fun AiSection() {
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(
-                enabled = source.isNotBlank() && apiKey.isNotBlank(),
+                enabled = !busy && source.isNotBlank() && apiKey.isNotBlank() && model.isNotBlank() && baseUrl.isNotBlank(),
                 onClick = {
                     status = "整理中…"
+                    busy = true
                     drafts = emptyList()
                     scope.launch {
                         val result = withContext(Dispatchers.IO) {
@@ -98,6 +106,7 @@ fun AiSection() {
                         }.onFailure {
                             status = "失败：${it.message}"
                         }
+                        busy = false
                     }
                 },
             ) { Text("AI 拆解") }
@@ -105,16 +114,12 @@ fun AiSection() {
             OutlinedButton(
                 enabled = drafts.isNotEmpty(),
                 onClick = {
-                    drafts.forEach { draft ->
-                        TaskRepository.add(
-                            title = draft.title,
-                            date = draft.date,
-                            time = draft.time,
-                            detail = draft.detail,
-                        )
-                    }
-                    status = "已添加 ${drafts.size} 条"
-                    drafts = emptyList()
+                    runCatching {
+                        TaskRepository.addAll(drafts.map { draft -> Task(id = "", title = draft.title, date = draft.date, time = draft.time, detail = draft.detail) })
+                    }.onSuccess {
+                        status = "已添加 ${drafts.size} 条"
+                        drafts = emptyList()
+                    }.onFailure { status = "添加失败，草稿已保留：${it.message}" }
                 },
             ) { Text("全部添加") }
         }

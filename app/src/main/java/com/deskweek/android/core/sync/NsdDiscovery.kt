@@ -51,24 +51,28 @@ class NsdDiscovery(private val context: Context) {
             }
 
             override fun onServiceFound(info: NsdServiceInfo) {
-                if (info.serviceType != SERVICE_TYPE && !info.serviceType.startsWith(SERVICE_TYPE)) return
+                if (!running || discoveryListener !== this || info.serviceType.trimEnd('.') != SERVICE_TYPE) return
                 resolve(manager, info, listener)
             }
 
             override fun onServiceLost(info: NsdServiceInfo) {
+                if (!running || discoveryListener !== this) return
                 listener.onLost(info.serviceName)
             }
 
             override fun onDiscoveryStopped(serviceType: String) {
+                if (discoveryListener === this) running = false
                 Log.d(TAG, "discovery stopped")
             }
 
             override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
+                if (discoveryListener !== this) return
                 running = false
                 listener.onError("发现启动失败：$errorCode")
             }
 
             override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {
+                if (discoveryListener !== this) return
                 running = false
                 listener.onError("发现停止失败：$errorCode")
             }
@@ -82,6 +86,7 @@ class NsdDiscovery(private val context: Context) {
     }
 
     fun stop() {
+        running = false
         val manager = nsdManager ?: return
         val listener = discoveryListener ?: return
         runCatching { manager.stopServiceDiscovery(listener) }
@@ -91,13 +96,16 @@ class NsdDiscovery(private val context: Context) {
 
     @Suppress("DEPRECATION")
     private fun resolve(manager: NsdManager, info: NsdServiceInfo, listener: Listener) {
+        val activeDiscovery = discoveryListener
         manager.resolveService(info, object : NsdManager.ResolveListener {
             override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
+                if (!running || discoveryListener !== activeDiscovery) return
                 // 早期版本解析经常失败，报给 UI 但不打断整个发现
                 listener.onError("解析 ${serviceInfo.serviceName} 失败：$errorCode")
             }
 
             override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
+                if (!running || discoveryListener !== activeDiscovery) return
                 val host = serviceInfo.host?.hostAddress ?: return
                 listener.onFound(
                     host = host,

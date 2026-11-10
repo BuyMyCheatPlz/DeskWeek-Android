@@ -23,29 +23,23 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
 
     override suspend fun doWork(): Result {
         val prefs = applicationContext.getSharedPreferences("deskweek_sync", Context.MODE_PRIVATE)
+        if (!prefs.getBoolean("enabled", false)) return Result.success()
         val host = prefs.getString("host", null) ?: return Result.success()
+        val pin = prefs.getString("pin", null) ?: return Result.success()
         val port = prefs.getInt("port", SyncSession.P0_PORT)
 
-        val dir = File(applicationContext.filesDir, "sync")
-        val store = SyncStore(dir)
-        val identity = SyncIdentity.loadOrCreate(dir)
-        val trust = TrustStore(dir)
-
-        // 没有已配对设备时不做任何网络动作
-        if (trust.all().isEmpty()) return Result.success()
-
-        return runCatching {
-            SyncSession(
-                host = host,
-                port = port,
-                expectedSha256 = SyncSession.P0_PIN,
-                identity = identity,
-                store = store,
-                trust = trust,
-            ).run()
-            Result.success()
-        }.getOrElse {
-            if (runAttemptCount < 3) Result.retry() else Result.failure()
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                val dir = File(applicationContext.filesDir, "sync")
+                val store = SyncStore(dir)
+                val identity = SyncIdentity.loadOrCreate(dir)
+                val trust = TrustStore(dir)
+                if (trust.all().isEmpty()) return@withContext Result.success()
+                SyncSession(host, port, pin, identity, store, trust).run()
+                Result.success()
+            }.getOrElse {
+                if (runAttemptCount < 3) Result.retry() else Result.failure()
+            }
         }
     }
 
@@ -54,6 +48,10 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         private const val IMMEDIATE_NAME = "deskweek-sync-now"
 
         fun ensureScheduled(context: Context) {
+            if (!context.getSharedPreferences("deskweek_sync", Context.MODE_PRIVATE).getBoolean("enabled", false)) {
+                WorkManager.getInstance(context).cancelUniqueWork(PERIODIC_NAME)
+                return
+            }
             val constraints = Constraints.Builder()
                 .setRequiredNetworkType(NetworkType.CONNECTED)
                 .build()

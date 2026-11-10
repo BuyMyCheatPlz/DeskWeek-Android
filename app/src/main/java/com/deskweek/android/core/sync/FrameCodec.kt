@@ -38,6 +38,7 @@ object FrameCodec {
         while (buffer.size - offset >= HEADER) {
             val length = readUInt32(buffer, offset)
             if (length == 0) throw ProtocolException("EFRAME", "empty frame")
+            if (length < 0) throw ProtocolException("EFRAME", "unsigned frame too large")
             if (length > MAX_FRAME) throw ProtocolException("EFRAME", "frame too large: $length")
             if (buffer.size - offset - HEADER < length) break
             val body = buffer.copyOfRange(offset + HEADER, offset + HEADER + length)

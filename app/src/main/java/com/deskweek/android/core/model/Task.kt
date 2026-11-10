@@ -1,6 +1,7 @@
 package com.deskweek.android.core.model
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import kotlinx.serialization.json.JsonObject
 
 /**
@@ -23,6 +24,7 @@ data class Task(
     val color: String = DEFAULT_COLORS[0],
     val defer: String = "none",     // "none" | "1m" | "Nd"
     val createdAt: String = "",
+    @Transient val extraFields: JsonObject = JsonObject(emptyMap()),
 ) {
     companion object {
         /** 与桌面版 manager.js / widget.js 的 COLORS 完全一致 */
@@ -43,4 +45,5 @@ data class StoreData(
     val prefs: JsonObject = JsonObject(emptyMap()),
     val revision: Int = 0,
     val updatedAt: String = "",
+    @Transient val extraFields: JsonObject = JsonObject(emptyMap()),
 )

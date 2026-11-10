@@ -199,4 +199,52 @@ class SyncMergeTest {
 
     private fun firstTask(log: OpLog): JsonObject =
         (log.projection.snapshot()["tasks"] as JsonArray)[0].jsonObject
+
+    @Test fun `cross author dependency waits for its create`() {
+        val log = OpLog("g-merge")
+        log.receive(listOf(op("B", 1, "t1", "patch", changes("title" to kotlinx.serialization.json.JsonPrimitive("new")), ctx(1))))
+        assertTrue(log.vectors().isEmpty())
+        log.receive(listOf(op("A", 1, "t1", "create", changes("title" to kotlinx.serialization.json.JsonPrimitive("old")))))
+        assertEquals("new", firstTitle(log))
+        assertEquals(1L, log.vectors()["B"])
+    }
+
+    @Test fun `next operation includes observed causal context`() {
+        val log = OpLog("g-merge")
+        log.receive(listOf(op("A", 1, "t1", "create")))
+        val next = log.nextOp("B", "t1", "patch", JsonObject(emptyMap()), recordedAt = "now")
+        assertEquals(1L, next["context"]!!.jsonObject["A"]!!.jsonPrimitive.long)
+    }
+
+    @Test fun `delivery permutations converge including conflict records`() {
+        val create = op("A", 1, "t1", "create", changes("title" to kotlinx.serialization.json.JsonPrimitive("base")))
+        val a = op("A", 2, "t1", "patch", changes("title" to kotlinx.serialization.json.JsonPrimitive("a")), ctx(1))
+        val b = op("B", 1, "t1", "patch", changes("title" to kotlinx.serialization.json.JsonPrimitive("b")), ctx(1))
+        val c = op("C", 1, "t1", "patch", changes("title" to kotlinx.serialization.json.JsonPrimitive("c")), ctx(1))
+        val expected = OpLog("g-merge").also { it.receive(listOf(create, a, b, c)) }.projection.canonical()
+        listOf(listOf(c, b, a, create), listOf(create, c, a, b), listOf(b, create, c, a)).forEach { sequence ->
+            val log = OpLog("g-merge")
+            sequence.forEach { log.receive(listOf(it)) }
+            assertEquals(expected, log.projection.canonical())
+        }
+    }
+
+    @Test fun `resolve retains chosen content and clears observed conflicts`() {
+        val log = OpLog("g-merge")
+        log.receive(listOf(
+            op("A", 1, "t1", "create", changes("title" to kotlinx.serialization.json.JsonPrimitive("base"))),
+            op("A", 2, "t1", "patch", changes("title" to kotlinx.serialization.json.JsonPrimitive("a")), ctx(1)),
+            op("B", 1, "t1", "patch", changes("title" to kotlinx.serialization.json.JsonPrimitive("b")), ctx(1)),
+            op("A", 3, "t1", "resolve", changes("title" to kotlinx.serialization.json.JsonPrimitive("b")),
+                buildJsonObject { put("A", 2); put("B", 1) }),
+        ))
+        assertEquals("b", firstTitle(log))
+        assertTrue((log.projection.snapshot()["conflicts"] as JsonArray).isEmpty())
+    }
+
+    @Test fun `same author writes are causal even for older empty context operations`() {
+        val log = OpLog("g-merge")
+        log.receive(listOf(op("A", 1, "t1", "create"), op("A", 2, "t1", "patch", changes("title" to kotlinx.serialization.json.JsonPrimitive("next")))))
+        assertTrue((log.projection.snapshot()["conflicts"] as JsonArray).isEmpty())
+    }
 }

@@ -10,6 +10,12 @@ import org.junit.Test
  * 端到端（真实 HTTP）由 mock server 现场验证，见 docs/verification-report.md。
  */
 class AiClientTest {
+    @org.junit.Test fun `malformed drafts do not create null or impossible calendar tasks`() {
+        val drafts = AiClient().parseDrafts("""[{"title":null},{"title":"ok","date":"2026-99-99","time":"99:99"},{"title":{"bad":true}}]""")
+        org.junit.Assert.assertEquals(1, drafts.size)
+        org.junit.Assert.assertEquals("", drafts.single().date)
+        org.junit.Assert.assertEquals("", drafts.single().time)
+    }
 
     private class FakeTransport(private val response: String) : HttpTransport {
         var lastUrl: String = ""

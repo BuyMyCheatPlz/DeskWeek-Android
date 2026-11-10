@@ -102,24 +102,25 @@ object TaskRules {
     /** 颜色非法或重复时按日期重排，保证同日任务颜色可区分 */
     fun reconcileColors(tasks: List<Task>): List<Task> {
         val seen = mutableMapOf<String, Int>()
-        return tasks.map { task ->
+        val colors = mutableMapOf<String, String>()
+        tasks.filter { !it.deleted && isValidDateKey(it.date) }
+            .sortedWith(compareBy({ it.createdAt }, { it.id })).forEach { task ->
             val index = seen.getOrElse(task.date) { 0 }
-            val expected = if (task.date.isBlank()) {
-                task.color.takeIf { it in Task.DEFAULT_COLORS } ?: Task.DEFAULT_COLORS[0]
-            } else {
-                Task.DEFAULT_COLORS[index % Task.DEFAULT_COLORS.size]
-            }
+            colors[task.id] = Task.DEFAULT_COLORS[index % Task.DEFAULT_COLORS.size]
             seen[task.date] = index + 1
+        }
+        return tasks.map { task ->
+            val expected = colors[task.id] ?: task.color.takeIf { it in Task.DEFAULT_COLORS } ?: Task.DEFAULT_COLORS[0]
             if (task.color == expected) task else task.copy(color = expected)
         }
     }
 
     /** 归一化单个任务，等价桌面版 normalizeItem() */
-    fun normalize(task: Task, now: String): Task {
+    fun normalize(task: Task, now: String, today: LocalDate = LocalDate.now()): Task {
         val time = if (isValidTime(task.time)) task.time else ""
         val date = when {
             isValidDateKey(task.date) -> task.date
-            time.isNotBlank() -> now.substringBefore("T")
+            time.isNotBlank() -> today.toString()
             else -> ""
         }
         val createdAt = if (isIsoInstant(task.createdAt)) task.createdAt else now
