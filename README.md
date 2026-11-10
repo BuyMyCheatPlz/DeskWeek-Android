@@ -13,7 +13,7 @@ Android 休眠、强行停止及后台执行限制可能延迟同步，恢复执
 | 数据（规划） | Room + DataStore，本地优先，`data.json` 与桌面版双向兼容 |
 | 同步（规划） | 三端对等局域网同步，首次配对，离线编辑后补同步 |
 | 最低版本 | Android 8.0（API 26） |
-| 状态 | **P0 展示层已实现并通过灰测**；本地数据闭环部分完成；**三端同步未实现** — 见 [实现规划](docs/android-port-plan.md)、[同步协议](docs/lan-sync-protocol.md) 与 [验证报告](docs/verification-report.md) |
+| 状态 | **v1.0.0 已发布**：本机功能 + 同步 P2 正确性；配对/发现/后台同步未实现 — 见 [发布说明](docs/release/RELEASE_NOTES-1.0.0.md) 与 [验证报告](docs/verification-report.md) |
 
 ## 与上游的关系
 
@@ -28,13 +28,14 @@ Android 休眠、强行停止及后台执行限制可能延迟同步，恢复执
 | --- | --- | --- |
 | 透明周历小组件（首版主形态） | ✅ 已实现 | `docs/evidence/04-widget.png` |
 | 主程序周视图 / 清单 / 编辑 | ✅ 已实现 | `docs/evidence/03-app-with-data.png` |
-| `data.json` 兼容读写 + 原子写 + 备份恢复 | ✅ 已实现，32 条单测 | `app/src/test/` |
+| `data.json` 兼容读写 + 原子写 + 备份恢复 | ✅ 已实现，45 条单测 | `app/src/test/` |
 | 导入 / 导出 | ✅ 逻辑+单测；UI 未端到端点击验证 | `TaskStoreTest` |
 | 动态壁纸形态（实验） | ✅ 可运行，**非首版形态** | `docs/evidence/02-icons-on-top.png` |
 | 同步协议 **P0**：规范化 JSON / 帧 / 消息 / TLS 握手 | ✅ 两端实现 + 11 条共享向量 + 跨进程互通 | `docs/evidence/06-p0-sync.png` |
 | 同步 **P2 正确性**：操作日志 / 幂等 / 缺口补齐 / 合并 / 墓碑 | ✅ 两端实现 + 11 个跨语言场景 + 双向补齐实测 | `docs/evidence/08-p2-catchup.png` |
 | 同步 **P3**：配对、mDNS 发现、后台调度、冲突解决 UI | ❌ 未实现 | 协议文档 §8 阶段表 |
-| AI 总结 / 农历 / 拖拽 / 自适应双栏 | ❌ 未实现 | 后续阶段 |
+| 自适应双栏（平板） | ✅ 已实现 | `docs/evidence/09-adaptive.png` |
+| AI 总结 / 农历 / 拖拽调天 | ❌ 未实现 | 后续阶段 |
 
 完整门禁记录见 [验证报告](docs/verification-report.md)。
 

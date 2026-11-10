@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -164,28 +165,108 @@ private fun WeekScreen(
     val days = (0..6).map { monday.plusDays(it.toLong()) }
     val today = LocalDate.now()
 
-    Column(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp)) {
-        Text(
-            text = "${monday.year} 年 ${monday.monthValue} 月 · 第 ${weekOfYear(monday)} 周",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
-        )
-        Spacer(Modifier.height(8.dp))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            days.forEachIndexed { index, day ->
-                DayCell(
-                    modifier = Modifier.weight(1f),
-                    day = day,
-                    label = WEEKDAY_CN[index],
-                    selected = day == selectedDate,
-                    isToday = day == today,
-                    count = TaskRepository.on(day.toString()).count { !it.done },
-                    onClick = { onSelect(day) },
-                )
+    if (wide) {
+        // 平板/展开态：左侧整周导航 + 右侧当日详情
+        Row(
+            modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Column(Modifier.weight(0.42f)) {
+                WeekHeader(monday)
+                Spacer(Modifier.height(8.dp))
+                days.forEachIndexed { index, day ->
+                    DayRow(
+                        day = day,
+                        label = WEEKDAY_CN[index],
+                        selected = day == selectedDate,
+                        isToday = day == today,
+                        count = TaskRepository.on(day.toString()).count { !it.done },
+                        onClick = { onSelect(day) },
+                    )
+                }
+            }
+            Box(Modifier.width(1.dp).fillMaxHeight().background(MaterialTheme.colorScheme.outlineVariant))
+            Column(Modifier.weight(0.58f)) {
+                DayTasks(selectedDate, onEdit)
             }
         }
-        Spacer(Modifier.height(12.dp))
-        HorizontalDivider()
+    } else {
+        Column(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp)) {
+            WeekHeader(monday)
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                days.forEachIndexed { index, day ->
+                    DayCell(
+                        modifier = Modifier.weight(1f),
+                        day = day,
+                        label = WEEKDAY_CN[index],
+                        selected = day == selectedDate,
+                        isToday = day == today,
+                        count = TaskRepository.on(day.toString()).count { !it.done },
+                        onClick = { onSelect(day) },
+                    )
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            HorizontalDivider()
+            DayTasks(selectedDate, onEdit)
+        }
+    }
+}
+
+@Composable
+private fun WeekHeader(monday: LocalDate) {
+    Text(
+        text = "${monday.year} 年 ${monday.monthValue} 月 · 第 ${weekOfYear(monday)} 周",
+        style = MaterialTheme.typography.titleMedium,
+        fontWeight = FontWeight.SemiBold,
+    )
+}
+
+@Composable
+private fun DayRow(
+    day: LocalDate,
+    label: String,
+    selected: Boolean,
+    isToday: Boolean,
+    count: Int,
+    onClick: () -> Unit,
+) {
+    val bg = when {
+        selected -> MaterialTheme.colorScheme.primaryContainer
+        isToday -> MaterialTheme.colorScheme.secondaryContainer
+        else -> Color.Transparent
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(bg)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, style = MaterialTheme.typography.labelLarge, modifier = Modifier.width(44.dp))
+        Text(
+            text = "${day.dayOfMonth} 日",
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = if (selected || isToday) FontWeight.Bold else FontWeight.Normal,
+        )
+        Spacer(Modifier.weight(1f))
+        if (count > 0) {
+            Text(
+                text = "$count 项",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+    }
+}
+
+@Composable
+private fun DayTasks(selectedDate: LocalDate, onEdit: (Task) -> Unit) {
+    Column(Modifier.fillMaxSize()) {
         Text(
             text = "${selectedDate.monthValue} 月 ${selectedDate.dayOfMonth} 日 · 待办",
             style = MaterialTheme.typography.labelLarge,
@@ -205,7 +286,6 @@ private fun WeekScreen(
         }
     }
 }
-
 @Composable
 private fun DayCell(
     modifier: Modifier,
@@ -416,11 +496,41 @@ private fun SettingsScreen(onOpenWallpaper: () -> Unit) {
         if (status.isNotBlank()) Text(status, style = MaterialTheme.typography.labelSmall)
 
         HorizontalDivider()
-        Text("同步（P2 实验）", style = MaterialTheme.typography.titleMedium)
+        Text("同步", style = MaterialTheme.typography.titleMedium)
         val syncDir = remember { java.io.File(context.filesDir, "sync") }
         val syncStore = remember { com.deskweek.android.core.sync.SyncStore(syncDir) }
         val syncIdentity = remember { com.deskweek.android.core.sync.SyncIdentity.loadOrCreate(syncDir) }
+        val syncPrefs = remember { context.getSharedPreferences("deskweek_sync", android.content.Context.MODE_PRIVATE) }
+        var host by remember {
+            mutableStateOf(
+                syncPrefs.getString("host", com.deskweek.android.core.sync.SyncSession.EMULATOR_HOST) ?: "10.0.2.2",
+            )
+        }
+        var portText by remember { mutableStateOf(syncPrefs.getInt("port", com.deskweek.android.core.sync.SyncSession.P0_PORT).toString()) }
         val scope = rememberCoroutineScope()
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = host,
+                onValueChange = {
+                    host = it
+                    syncPrefs.edit().putString("host", it).apply()
+                },
+                label = { Text("主机") },
+                singleLine = true,
+                modifier = Modifier.weight(1f),
+            )
+            OutlinedTextField(
+                value = portText,
+                onValueChange = {
+                    portText = it.filter(Char::isDigit)
+                    portText.toIntOrNull()?.let { port -> syncPrefs.edit().putInt("port", port).apply() }
+                },
+                label = { Text("端口") },
+                singleLine = true,
+                modifier = Modifier.width(110.dp),
+            )
+        }
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = {
@@ -450,23 +560,35 @@ private fun SettingsScreen(onOpenWallpaper: () -> Unit) {
                 status = "同步中…"
                 scope.launch {
                     status = withContext(Dispatchers.IO) {
-                        runCatching {
-                            val report = com.deskweek.android.core.sync.SyncSession(
-                                host = com.deskweek.android.core.sync.SyncSession.EMULATOR_HOST,
-                                port = com.deskweek.android.core.sync.SyncSession.P0_PORT,
-                                expectedSha256 = com.deskweek.android.core.sync.SyncSession.P0_PIN,
-                                identity = syncIdentity,
-                                store = syncStore,
-                            ).run()
-                            "同步完成 · ${report.tlsVersion} · 拉取 ${report.pulled} 条 · 推送 ${report.pushed} 条 · " +
-                                "向量 ${report.vectors}"
-                        }.getOrElse { "同步失败：${it.message}" }
+                        val port = portText.toIntOrNull() ?: com.deskweek.android.core.sync.SyncSession.P0_PORT
+                        var lastError: String? = null
+                        var result: String? = null
+                        // 最多重试 3 次，退避 400ms/800ms；失败保留原因
+                        for (attempt in 1..3) {
+                            val outcome = runCatching {
+                                com.deskweek.android.core.sync.SyncSession(
+                                    host = host,
+                                    port = port,
+                                    expectedSha256 = com.deskweek.android.core.sync.SyncSession.P0_PIN,
+                                    identity = syncIdentity,
+                                    store = syncStore,
+                                ).run()
+                            }
+                            if (outcome.isSuccess) {
+                                val r = outcome.getOrThrow()
+                                result = "同步完成 · 第 $attempt 次 · ${r.tlsVersion} · 拉取 ${r.pulled} 条 · " +
+                                    "推送 ${r.pushed} 条 · 向量 ${r.vectors}"
+                                break
+                            }
+                            lastError = outcome.exceptionOrNull()?.message
+                            if (attempt < 3) Thread.sleep(400L * attempt)
+                        }
+                        result ?: "同步失败（已重试 3 次）：$lastError"
                     }
                 }
             }) { Text("立即同步") }
         }
-        Text(
-            "需宿主机运行 node scripts/serve-p0.cjs；验证 TLS + 帧 + ECDSA 签名 + 缺口补齐。",
+        Text("需宿主机运行 node scripts/serve-p0.cjs；验证 TLS + 帧 + ECDSA 签名 + 缺口补齐。",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.outline,
         )

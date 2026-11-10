@@ -19,3 +19,6 @@ Thumbs.db
 *.jks
 *.keystore
 keystore.properties
+
+# 发布产物
+dist/
