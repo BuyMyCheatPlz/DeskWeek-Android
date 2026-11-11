@@ -1,6 +1,6 @@
 # DeskWeek · Android
 
-DeskWeek 2.1.0 现已支持 [二维码无损压缩优化](docs/qr-density.md)，传输张数大幅减少 70%~90%，面对面扫码更快速。
+DeskWeek 现已支持 [二维码无损压缩优化](docs/qr-density.md) 与 [小组件文字自适应排版优化](docs/widget-visible-text-fix.md)，传输张数大幅减少 70%~90%，桌面小组件在各类屏幕网格下均能清晰完整展现任务内容。
 
 DeskWeek 的 Android 手机和平板客户端。主要功能是**桌面周历小组件**和**任务管理 App**，支持透明/有底板模式以及浅色/深色文字，放在桌面上不会遮挡你原来的壁纸。
 
