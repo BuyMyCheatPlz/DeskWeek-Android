@@ -46,7 +46,17 @@ object TaskRepository {
         _error.value = result.loadError?.let { "数据及备份损坏，已阻止覆盖；请恢复有效文件" }
         val appContext = context.applicationContext
         widgetJob = CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
-            state.collectLatest { runCatching { DeskWeekWidget().updateAll(appContext) } }
+            state.collectLatest {
+                try {
+                    DeskWeekWidget().updateAll(appContext)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    // Task persistence already succeeded. Keep widget failures observable without
+                    // reporting the task itself as unsaved or logging any task content.
+                    android.util.Log.e("DeskWeekWidget", "Unable to refresh widgets", error)
+                }
+            }
         }
     }
 

@@ -2,6 +2,8 @@ package com.deskweek.android.widget
 
 import android.content.Context
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
@@ -40,7 +42,6 @@ import com.deskweek.android.R
 import com.deskweek.android.core.data.TaskRepository
 import com.deskweek.android.core.model.Task
 import com.deskweek.android.core.model.TaskRules
-import kotlinx.coroutines.flow.MutableStateFlow
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.temporal.TemporalAdjusters
@@ -79,22 +80,29 @@ class DeskWeekWidget : GlanceAppWidget() {
         val weekDays: List<LocalDate>,
         val byDate: Map<String, List<Task>>,
         val overflow: Map<String, Int>,
+        val undated: List<Task>,
     )
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         TaskRepository.init(context)
-        val snapshot = loadSnapshot()
-        val transparent = context.getSharedPreferences("deskweek_widget", Context.MODE_PRIVATE).getBoolean("transparent", false)
-        val lightText = context.getSharedPreferences("deskweek_widget", Context.MODE_PRIVATE).getBoolean("lightText", true)
-        val ink = if (transparent && lightText) Ink(Color.White, Color(0xDDFFFFFF)) else Ink(INK, INK_DIM)
-        provideContent { CompositionLocalProvider(LocalInk provides ink) { WidgetBody(snapshot, transparent) } }
+        // updateAll recomposes an active Glance session; it does not rerun provideGlance.
+        // Observe tasks inside the composition so an initially empty snapshot cannot get stuck.
+        provideContent {
+            val data by TaskRepository.state.collectAsState()
+            val snapshot = loadSnapshot(data.items)
+            val prefs = context.getSharedPreferences("deskweek_widget", Context.MODE_PRIVATE)
+            val transparent = prefs.getBoolean("transparent", false)
+            val lightText = prefs.getBoolean("lightText", true)
+            val ink = if (transparent && lightText) Ink(Color.White, Color(0xDDFFFFFF)) else Ink(INK, INK_DIM)
+            CompositionLocalProvider(LocalInk provides ink) { WidgetBody(snapshot, transparent) }
+        }
     }
 
-    private fun loadSnapshot(): Snapshot {
+    private fun loadSnapshot(allItems: List<Task>): Snapshot {
         val today = LocalDate.now()
         val start = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
         val days = (0..6).map { start.plusDays(it.toLong()) }
-        val items = TaskRepository.state.value.items.filter { !it.deleted && it.date.isNotBlank() }
+        val items = allItems.filter { !it.deleted && it.date.isNotBlank() }
         val grouped = items.groupBy { it.date }
         val byDate = mutableMapOf<String, List<Task>>()
         val overflow = mutableMapOf<String, Int>()
@@ -104,7 +112,8 @@ class DeskWeekWidget : GlanceAppWidget() {
             byDate[key] = sorted
             if (sorted.size > 3) overflow[key] = sorted.size - 3
         }
-        return Snapshot(today, days, byDate, overflow)
+        val undated = TaskRules.sortTasks(allItems.filter { !it.deleted && it.date.isBlank() }, today)
+        return Snapshot(today, days, byDate, overflow, undated)
     }
 
     @Composable
@@ -121,7 +130,7 @@ class DeskWeekWidget : GlanceAppWidget() {
     @Composable
     private fun SmallBody(snapshot: Snapshot, background: ColorProvider) {
         val todayKey = snapshot.today.toString()
-        val tasks = snapshot.byDate[todayKey].orEmpty()
+        val tasks = snapshot.byDate[todayKey].orEmpty() + snapshot.undated
         Column(modifier = GlanceModifier.fillMaxSize().background(background).cornerRadius(16.dp).padding(8.dp)) {
             Row(verticalAlignment = Alignment.Vertical.CenterVertically) {
                 Text(
@@ -151,7 +160,7 @@ class DeskWeekWidget : GlanceAppWidget() {
                     Text(if (day == snapshot.today) "今" else day.dayOfMonth.toString(), modifier = GlanceModifier.width(colWidth), style = dimStyle())
                 }
             }
-            val todayTasks = snapshot.byDate[snapshot.today.toString()].orEmpty()
+            val todayTasks = snapshot.byDate[snapshot.today.toString()].orEmpty() + snapshot.undated
             todayTasks.take(3).forEach { TaskLine(it) }
             if (todayTasks.size > 3) Text("还有 ${todayTasks.size - 3} 项", modifier = GlanceModifier.clickable(actionStartActivity(MainActivity::class.java)), style = dimStyle())
         }
@@ -167,6 +176,15 @@ class DeskWeekWidget : GlanceAppWidget() {
                 snapshot.weekDays.forEach { day ->
                     DayColumn(day, snapshot, GlanceModifier.width(colWidth), compact = false)
                 }
+            }
+            if (snapshot.undated.isNotEmpty()) {
+                Spacer(modifier = GlanceModifier.height(6.dp))
+                Text("未排期 ${snapshot.undated.size} 项", style = dimStyle())
+                snapshot.undated.take(2).forEach { TaskLine(it) }
+                if (snapshot.undated.size > 2) Text(
+                    "还有 ${snapshot.undated.size - 2} 项未排期",
+                    modifier = GlanceModifier.clickable(actionStartActivity(MainActivity::class.java)), style = dimStyle(),
+                )
             }
         }
     }
@@ -221,7 +239,7 @@ class DeskWeekWidget : GlanceAppWidget() {
     @Composable
     private fun TaskLine(task: Task, dense: Boolean = false) {
         Text(
-            text = (if (task.done) "☑ " else "☐ ") + task.title,
+            text = (if (task.done) "☑ " else "☐ ") + (if (task.date.isBlank()) "未排期 · " else "") + task.title,
             maxLines = 1,
             style = TextStyle(
                 color = if (task.done) ColorProvider(LocalInk.current.dim) else ColorProvider(LocalInk.current.text),

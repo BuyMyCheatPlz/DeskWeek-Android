@@ -20,6 +20,8 @@ DeskWeek 的 Android 手机和平板客户端。主要功能是**桌面周历小
 
 完整的功能规划见 [实现规划](docs/android-port-plan.md)；当前测试结果见 [验证报告](docs/verification-report.md)。
 
+新增后组件仍为空的修复及验收见 [小组件刷新修复记录](docs/widget-refresh-fix.md)。无日期任务现在以「未排期」展示。
+
 还没做完或需要在真手机上确认的功能，可以参照 [验收清单](docs/acceptance-checklist.md) 来检查。
 
 ## 二维码离线传输
