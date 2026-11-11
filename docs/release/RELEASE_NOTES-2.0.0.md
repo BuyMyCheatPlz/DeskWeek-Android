@@ -2,7 +2,7 @@
 
 发布日期：2026-11-11
 构建：`versionCode 6` / `versionName 2.0.0`，`minSdk 26`，`targetSdk 36`，`compileSdk 37`
-产物：`DeskWeek-v2.0.0.apk`，SHA-256：`c3e29e9fd319c1bf05a30d74743126faecd4c62d654d963c78db030e19343d12`
+产物：`DeskWeek-v2.0.0.apk`，SHA-256：`8cfe4b6c365df3556c2e61d632fdd7ce75f6ac01bb0404c88261553b37978fab`
 
 ## ✨ 新增功能
 

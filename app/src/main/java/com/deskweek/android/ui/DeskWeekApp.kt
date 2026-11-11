@@ -672,6 +672,25 @@ private fun SettingsScreen(onOpenWallpaper: () -> Unit) {
             }
         }
 
+        // 离线扫码导入
+        val qrScanLauncher = rememberLauncherForActivityResult(
+            ActivityResultContracts.StartActivityForResult(),
+        ) { result ->
+            if (result.resultCode == android.app.Activity.RESULT_OK) {
+                val file = java.io.File(context.cacheDir, com.deskweek.android.transfer.QrScanActivity.RESULT_FILE)
+                if (file.exists()) {
+                    runCatching {
+                        val parsed = com.deskweek.android.core.data.TaskStore(java.io.File(context.filesDir, "data")).parse(file.readText())
+                        importCount = parsed.items.size
+                        pendingImport = file
+                        status = "扫码读取 $importCount 条，请选择合并或替换"
+                    }.onFailure {
+                        status = "扫码解析失败：${it.message}"
+                    }
+                }
+            }
+        }
+
         pendingImport?.let { file -> AlertDialog(
             onDismissRequest = { pendingImport = null },
             title = { Text("导入 $importCount 条任务") },
@@ -691,8 +710,20 @@ private fun SettingsScreen(onOpenWallpaper: () -> Unit) {
                 Text("导入 data.json")
             }
         }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = {
+                context.startActivity(android.content.Intent(context, com.deskweek.android.transfer.QrExportActivity::class.java))
+            }) {
+                Text("展示 JSON 二维码")
+            }
+            OutlinedButton(onClick = {
+                qrScanLauncher.launch(android.content.Intent(context, com.deskweek.android.transfer.QrScanActivity::class.java))
+            }) {
+                Text("扫描 JSON 二维码")
+            }
+        }
         Text(
-            "导出的文件可直接替换桌面版 data/data.json，反之亦然。",
+            "扫码或导出文件可与桌面版互传任务。两台设备面对面扫码，无需处于同一网络。",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.outline,
         )
