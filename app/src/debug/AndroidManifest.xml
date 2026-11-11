@@ -1,5 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <application>
+    <application android:networkSecurityConfig="@xml/qa_network_security">
         <provider android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.qa-files"
             android:exported="false" android:grantUriPermissions="true">

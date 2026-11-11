@@ -20,8 +20,8 @@ android {
         applicationId = "com.deskweek.android"
         minSdk = 26
         targetSdk = 36
-        versionCode = 8
-        versionName = "2.1.1"
+        versionCode = 9
+        versionName = "2.2.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -85,6 +85,7 @@ dependencies {
     implementation(libs.lunar)
     implementation(libs.okhttp)
     implementation(libs.androidx.work.runtime)
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0")
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
 
     testImplementation(libs.junit)

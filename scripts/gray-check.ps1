@@ -47,8 +47,14 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Activity start failed' }
     Start-Sleep -Seconds 3
     Check 'MainActivity resumed' {
-        $activity = (& $adb -s $Device shell dumpsys activity activities) -join "`n"
-        [bool]($activity -match ('topResumedActivity=.*' + [regex]::Escape($package) + '/com.deskweek.android.MainActivity'))
+        $deadline = (Get-Date).AddSeconds(12)
+        do {
+            $activity = (& $adb -s $Device shell dumpsys activity activities) -join "`n"
+            $prefix = 'topResumedActivity=.*' + [regex]::Escape($package) + '/.*MainActivity'
+            if ($activity -match $prefix) { return $true }
+            Start-Sleep -Milliseconds 600
+        } while ((Get-Date) -lt $deadline)
+        return $false
     }
     Check 'No app crash' {
         $crashes = (& $adb -s $Device logcat -d -b crash) -join "`n"

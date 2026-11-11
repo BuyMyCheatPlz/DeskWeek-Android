@@ -54,6 +54,28 @@ class AiClientTest {
     }
 
     @Test
+    fun `extracts drafts from a wrapped items object`() {
+        val transport = FakeTransport(completion("""{"items":[{"title":"包装对象","date":"2026-11-14"}]}"""))
+        val drafts = AiClient(transport).extract(AiConfig("https://example.com/v1", "m", "k"), "资料")
+        assertEquals("包装对象", drafts.single().title)
+        assertEquals("2026-11-14", drafts.single().date)
+    }
+
+    @Test
+    fun `includes extracted file text and page images in the request`() {
+        val transport = FakeTransport(completion("""[{"title":"来自文件"}]"""))
+        val attachments = listOf(
+            ExtractedDocument(name = "通知.docx", text = "周五前提交课程报告"),
+            ExtractedDocument(name = "海报.pdf", images = listOf("data:image/jpeg;base64,AAAA")),
+        )
+        AiClient(transport).extract(AiConfig("https://example.com/v1", "m", "k"), "", attachments)
+        assertTrue(transport.lastBody.contains("周五前提交课程报告"))
+        assertTrue(transport.lastBody.contains("通知.docx"))
+        assertTrue(transport.lastBody.contains("\"type\":\"image_url\""))
+        assertTrue(transport.lastBody.contains("data:image/jpeg;base64,AAAA"))
+    }
+
+    @Test
     fun `strips markdown fences`() {
         val transport = FakeTransport(completion("```json\n[{\"title\":\"带围栏\"}]\n```"))
         val drafts = AiClient(transport).extract(AiConfig("https://example.com/v1", "m", "k"), "x")

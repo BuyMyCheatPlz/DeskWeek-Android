@@ -3,6 +3,7 @@ package com.deskweek.android.core.ai
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -68,9 +69,39 @@ class OkHttpTransport(
  */
 class AiClient(private val transport: HttpTransport = OkHttpTransport()) {
 
-    fun extract(config: AiConfig, text: String): List<TaskDraft> {
+    fun extract(
+        config: AiConfig,
+        text: String,
+        attachments: List<ExtractedDocument> = emptyList(),
+    ): List<TaskDraft> {
         require(config.configured) { "AI 未配置" }
-        require(text.isNotBlank()) { "内容为空" }
+        val fileText = attachments
+            .filter { it.text.isNotBlank() }
+            .joinToString("\n\n---\n\n") { "文件：${it.name}\n${it.text.take(DocumentTextExtractor.MAX_CHARS)}" }
+        val material = buildList {
+            if (text.isNotBlank()) add(text.trim())
+            if (fileText.isNotBlank()) add("以下是用户添加的文件内容，请结合这些内容提取待办：\n$fileText")
+        }.joinToString("\n\n").take(SOURCE_MAX_CHARS)
+        val images = attachments.flatMap { it.images }.take(MAX_IMAGES)
+        require(material.isNotBlank() || images.isNotEmpty()) { "内容为空" }
+        val contentText = material.ifBlank { "请整理图片或 PDF 页面中的任务信息。" }
+
+        val content = if (images.isEmpty()) {
+            JsonPrimitive(contentText)
+        } else {
+            buildJsonArray {
+                add(buildJsonObject {
+                    put("type", "text")
+                    put("text", contentText)
+                })
+                images.forEach { image ->
+                    add(buildJsonObject {
+                        put("type", "image_url")
+                        put("image_url", buildJsonObject { put("url", image) })
+                    })
+                }
+            }
+        }
 
         val body = buildJsonObject {
             put("model", config.model)
@@ -82,7 +113,7 @@ class AiClient(private val transport: HttpTransport = OkHttpTransport()) {
                 })
                 add(buildJsonObject {
                     put("role", "user")
-                    put("content", text.take(12000))
+                    put("content", content)
                 })
             })
         }.toString()
@@ -99,10 +130,15 @@ class AiClient(private val transport: HttpTransport = OkHttpTransport()) {
         val root = runCatching { Json.parseToJsonElement(raw) as? JsonObject }.getOrNull()
         val choice = (root?.get("choices") as? JsonArray)?.firstOrNull() as? JsonObject
         val response = choice?.get("message") as? JsonObject
-        val content = (response?.get("content") as? kotlinx.serialization.json.JsonPrimitive)
-            ?.takeIf { it.isString }?.content ?: throw IllegalStateException("接口未返回可用的待办内容")
+        val responseContent = when (val value = response?.get("content")) {
+            is JsonPrimitive -> value.takeIf { it.isString }?.content
+            is JsonArray -> value.joinToString("") { part ->
+                ((part as? JsonObject)?.get("text") as? JsonPrimitive)?.takeIf { it.isString }?.content.orEmpty()
+            }
+            else -> null
+        }?.takeIf { it.isNotBlank() } ?: throw IllegalStateException("接口未返回可用的待办内容")
 
-        return parseDrafts(content)
+        return parseDrafts(responseContent)
     }
 
     internal fun parseDrafts(content: String): List<TaskDraft> {
@@ -113,10 +149,16 @@ class AiClient(private val transport: HttpTransport = OkHttpTransport()) {
         }
         val element = runCatching { Json.parseToJsonElement(json) }
             .getOrElse { throw IllegalStateException("模型没有返回合法 JSON") }
-        val array = element as? JsonArray ?: throw IllegalStateException("模型返回的不是数组")
+        val array = when (element) {
+            is JsonArray -> element
+            is JsonObject -> (element["items"] as? JsonArray)
+                ?: (element["tasks"] as? JsonArray)
+                ?: throw IllegalStateException("模型返回的不是数组")
+            else -> throw IllegalStateException("模型返回的不是数组")
+        }
         return array.mapNotNull { item ->
             val obj = item as? JsonObject ?: return@mapNotNull null
-            fun text(key: String) = (obj[key] as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content.orEmpty()
+            fun text(key: String) = (obj[key] as? JsonPrimitive)?.takeIf { it.isString }?.content.orEmpty()
             val title = text("title").trim()
             if (title.isEmpty()) return@mapNotNull null
             TaskDraft(
@@ -138,9 +180,11 @@ class AiClient(private val transport: HttpTransport = OkHttpTransport()) {
     }
 
     companion object {
+        const val MAX_IMAGES = 4
+        const val SOURCE_MAX_CHARS = 24_000
         private const val SYSTEM_PROMPT =
-            "你是待办提取器。把用户给的资料整理成待办事项，只输出 JSON 数组，" +
-                "每项包含 title（必填，中文，不超过 100 字）、date（YYYY-MM-DD，可空）、" +
+            "你是待办提取器。把用户给的文字、聊天记录，以及用户添加的文档或 PDF 页面图片，整理成待办事项。" +
+                "只输出 JSON 数组，每项包含 title（必填，中文，不超过 100 字）、date（YYYY-MM-DD，可空）、" +
                 "time（HH:mm，可空）、detail（可空）。不要输出解释或 Markdown。"
     }
 }

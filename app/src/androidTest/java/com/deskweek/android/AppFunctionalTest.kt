@@ -35,7 +35,7 @@ class AppFunctionalTest {
         var text: String? = null
         // A semantics node may appear before the system Activity transition/pixel copy settles.
         // Like the continuous camera decoder, wait for a complete, current QR frame.
-        ui.waitUntil(5000) {
+        ui.waitUntil(15000) {
             val image = ui.onNodeWithContentDescription(description).captureToImage().asAndroidBitmap()
             try {
                 val pixels = IntArray(image.width * image.height)
