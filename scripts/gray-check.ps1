@@ -76,6 +76,6 @@ try {
         & $adb -s $Device shell rm /sdcard/deskweek-smoke.png | Out-Null
         [bool]((Get-Item -LiteralPath $screenshot).Length -gt 8)
     }
-    Write-Host "Smoke: $passed passed / $failed failed / $skipped skipped. Smoke test completed."
+    Write-Host "Smoke: $passed passed / $failed failed / $skipped skipped. This is not release approval."
     if ($failed -gt 0) { exit 1 }
 } finally { Pop-Location }

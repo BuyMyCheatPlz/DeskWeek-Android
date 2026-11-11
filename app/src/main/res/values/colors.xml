@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- 应用图标背景 -->
+    <color name="ic_launcher_background">#FFFFFF</color>
     <!-- 与桌面版 6 色板配套的文字色；壁纸/桌面背景下保证可读 -->
     <color name="dw_ink">#E61E1E22</color>
     <color name="dw_ink_dim">#99202020</color>

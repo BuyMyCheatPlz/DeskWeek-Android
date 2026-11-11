@@ -1,6 +1,7 @@
 package com.deskweek.android
 
 import androidx.compose.ui.test.*
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.deskweek.android.core.ai.ApiKeyStorage
@@ -17,6 +18,7 @@ import android.content.Intent
 import androidx.core.content.FileProvider
 import androidx.test.espresso.intent.Intents
 import androidx.test.espresso.intent.matcher.IntentMatchers.hasAction
+import androidx.test.espresso.intent.matcher.IntentMatchers.hasComponent
 
 @RunWith(AndroidJUnit4::class)
 class AppFunctionalTest {
@@ -143,6 +145,86 @@ class AppFunctionalTest {
             ui.runOnIdle { assertEquals("保持任务", TaskRepository.state.value.items.single().title) }
             ui.onNodeWithText("导入失败", substring = true).assertExists()
         } finally { Intents.release() }
+    }
+    @Test fun scannedJsonRequiresConfirmationAndMergesWithoutDuplicatingIds() {
+        val original = seed("扫码前任务")
+        File(ui.activity.cacheDir, com.deskweek.android.transfer.QrScanActivity.RESULT_FILE).writeText(
+            """{"items":[{"id":"${original.id}","title":"扫码覆盖同 ID"},{"id":"qr-new","title":"扫码新任务","deleted":true}]}""")
+        Intents.init()
+        try {
+            Intents.intending(hasComponent(com.deskweek.android.transfer.QrScanActivity::class.java.name))
+                .respondWith(Instrumentation.ActivityResult(Activity.RESULT_OK, Intent()))
+            ui.onNodeWithText("设置").performClick()
+            ui.onNodeWithText("扫描 JSON 二维码").performScrollTo().performClick()
+            ui.onNodeWithText("导入 2 条任务").assertIsDisplayed()
+            ui.runOnIdle { assertEquals("扫码前任务", TaskRepository.state.value.items.single().title) }
+            ui.onNodeWithText("合并").performClick()
+            ui.runOnIdle {
+                assertEquals(2, TaskRepository.state.value.items.size)
+                assertEquals("扫码覆盖同 ID", TaskRepository.state.value.items.first { it.id == original.id }.title)
+                assertTrue(TaskRepository.state.value.items.first { it.id == "qr-new" }.deleted)
+            }
+        } finally { Intents.release() }
+    }
+    @Test fun scannedJsonCancelKeepsDataAndReplaceWritesDurably() {
+        seed("扫码保留任务")
+        File(ui.activity.cacheDir, com.deskweek.android.transfer.QrScanActivity.RESULT_FILE)
+            .writeText("""{"items":[{"id":"qr-replace","title":"扫码替换任务","done":true}],"prefs":{"qrTest":true}}""")
+        Intents.init()
+        try {
+            Intents.intending(hasComponent(com.deskweek.android.transfer.QrScanActivity::class.java.name))
+                .respondWith(Instrumentation.ActivityResult(Activity.RESULT_OK, Intent()))
+            ui.onNodeWithText("设置").performClick()
+            ui.onNodeWithText("扫描 JSON 二维码").performScrollTo().performClick()
+            ui.onNodeWithText("取消").performClick()
+            ui.runOnIdle { assertEquals("扫码保留任务", TaskRepository.state.value.items.single().title) }
+            ui.onNodeWithText("扫描 JSON 二维码").performClick()
+            ui.onNodeWithText("替换").performClick()
+            ui.runOnIdle {
+                val stored = TaskStore(TaskRepository.storeFile().parentFile!!).load().data
+                assertEquals("扫码替换任务", stored.items.single().title); assertTrue(stored.items.single().done)
+                assertNotNull(stored.prefs["qrTest"])
+            }
+        } finally { Intents.release() }
+    }
+    @Test fun cancelledCameraResultNeverImportsStaleCache() {
+        seed("相机取消保留")
+        File(ui.activity.cacheDir, com.deskweek.android.transfer.QrScanActivity.RESULT_FILE).writeText("""{"items":[]}""")
+        Intents.init()
+        try {
+            Intents.intending(hasComponent(com.deskweek.android.transfer.QrScanActivity::class.java.name))
+                .respondWith(Instrumentation.ActivityResult(Activity.RESULT_CANCELED, Intent()))
+            ui.onNodeWithText("设置").performClick()
+            ui.onNodeWithText("扫描 JSON 二维码").performScrollTo().performClick()
+            ui.onNodeWithText("导入 0 条任务").assertDoesNotExist()
+            ui.runOnIdle { assertEquals("相机取消保留", TaskRepository.state.value.items.single().title) }
+        } finally { Intents.release() }
+    }
+    @Test fun exportQrFitsTheScreenAndItsVisibleImageDecodes() {
+        seed("实际屏幕二维码任务")
+        val cache = ui.activity.cacheDir
+        val scenario = androidx.test.core.app.ActivityScenario.launch<com.deskweek.android.transfer.QrExportActivity>(
+            Intent(ui.activity, com.deskweek.android.transfer.QrExportActivity::class.java))
+        try {
+            ui.waitUntil(15000) { ui.onAllNodesWithContentDescription("任务 JSON 二维码，第 1 张").fetchSemanticsNodes().isNotEmpty() }
+            ui.onNodeWithContentDescription("任务 JSON 二维码，第 1 张").assertIsDisplayed()
+            ui.waitForIdle()
+            // UiAutomation screenshots include the system's Activity transition, outside Compose idle.
+            Thread.sleep(600)
+            val bitmap = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
+            File(cache, "qa-qr-export.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+            val bounds = ui.onNodeWithContentDescription("任务 JSON 二维码，第 1 张").fetchSemanticsNode().boundsInRoot
+            assertTrue(bounds.left >= 0 && bounds.top >= 0 && bounds.right <= bitmap.width && bounds.bottom <= bitmap.height)
+            // Capture the displayed node in window coordinates; boundsInRoot excludes system bars.
+            val crop = ui.onNodeWithContentDescription("任务 JSON 二维码，第 1 张").captureToImage().asAndroidBitmap()
+            val pixels = IntArray(crop.width * crop.height)
+            crop.getPixels(pixels, 0, crop.width, 0, 0, crop.width, crop.height)
+            val source = com.google.zxing.RGBLuminanceSource(crop.width, crop.height, pixels)
+            val binary = com.google.zxing.BinaryBitmap(com.google.zxing.common.HybridBinarizer(source))
+            val decoded = com.google.zxing.MultiFormatReader().decode(binary, mapOf(com.google.zxing.DecodeHintType.TRY_HARDER to true))
+            assertTrue(decoded.text.contains("实际屏幕二维码任务"))
+            crop.recycle(); bitmap.recycle()
+        } finally { scenario.close() }
     }
     @Test fun moveDateDialogCanClearDate() {
         seed()

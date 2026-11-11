@@ -27,7 +27,11 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
         )
         TaskRepository.init(applicationContext)
-        runCatching { com.deskweek.android.core.sync.SyncWorker.ensureScheduled(applicationContext) }
+        // Offline QR/file transfers supersede the old experimental LAN worker.
+        androidx.work.WorkManager.getInstance(applicationContext).apply {
+            cancelUniqueWork("deskweek-sync-periodic")
+            cancelUniqueWork("deskweek-sync-now")
+        }
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {

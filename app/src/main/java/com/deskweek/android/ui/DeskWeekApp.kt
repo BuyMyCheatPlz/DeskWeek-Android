@@ -702,12 +702,12 @@ private fun SettingsScreen(onOpenWallpaper: () -> Unit) {
         AiSection()
 
         HorizontalDivider()
-        Text("局域网多设备协同（实验功能）", style = MaterialTheme.typography.titleMedium)
-        Text("支持在同一局域网下自动发现设备与安全通信，多端日常任务自动无缝互通正在积极完善中。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+        Text("同步协议实验", style = MaterialTheme.typography.titleMedium)
+        Text("目前只交换独立测试日志，尚未接入日常任务，也不能直接在两台 Android 之间同步。", color = MaterialTheme.colorScheme.error)
         val syncDir = remember { java.io.File(context.filesDir, "sync") }
         val syncStoreResult = remember { runCatching { com.deskweek.android.core.sync.SyncStore(syncDir) } }
         if (syncStoreResult.isFailure) {
-            Text("同步历史无法恢复，已停止同步服务；本地任务不受影响。", color = MaterialTheme.colorScheme.error)
+            Text("同步历史无法恢复，已停止实验同步；本地任务不受影响。", color = MaterialTheme.colorScheme.error)
             return@Column
         }
         val syncStore = syncStoreResult.getOrThrow()
@@ -723,7 +723,7 @@ private fun SettingsScreen(onOpenWallpaper: () -> Unit) {
         var syncBusy by remember { mutableStateOf(false) }
         var backgroundSync by remember { mutableStateOf(syncPrefs.getBoolean("enabled", false)) }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("后台自动增量同步", Modifier.weight(1f))
+            Text("后台补齐实验日志", Modifier.weight(1f))
             Switch(backgroundSync, onCheckedChange = {
                 backgroundSync = it
                 syncPrefs.edit().putBoolean("enabled", it).apply()
@@ -843,7 +843,7 @@ private fun SettingsScreen(onOpenWallpaper: () -> Unit) {
                 OutlinedButton(onClick = { runSync(peer.sas) }) { Text("确认配对 ${peer.sas}") }
             }
         }
-        Text("需对端设备处于同一局域网并已开启同步服务。",
+        Text("需对端提供兼容实验协议的服务与可信证书指纹；当前桌面工程尚未接入同步。",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.outline,
         )

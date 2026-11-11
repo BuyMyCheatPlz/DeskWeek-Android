@@ -2,10 +2,14 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
     <application
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
@@ -20,6 +24,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <activity android:name=".transfer.QrScanActivity" android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode" />
+        <activity android:name=".transfer.QrExportActivity" android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode" />
 
         <service
             android:name=".wallpaper.DeskWeekWallpaperService"

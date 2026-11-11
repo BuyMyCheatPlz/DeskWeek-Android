@@ -21,7 +21,7 @@ android {
         minSdk = 26
         targetSdk = 36
         versionCode = 6
-        versionName = "1.3.0"
+        versionName = "2.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -85,6 +85,7 @@ dependencies {
     implementation(libs.lunar)
     implementation(libs.okhttp)
     implementation(libs.androidx.work.runtime)
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
 
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.compose.bom))
