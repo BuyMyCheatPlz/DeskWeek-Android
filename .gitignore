@@ -24,4 +24,4 @@ keystore.properties
 dist/
 *.apk
 *.apk.sha256
-
+.kotlin/

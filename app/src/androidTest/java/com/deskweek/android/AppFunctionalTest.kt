@@ -31,6 +31,28 @@ class AppFunctionalTest {
     }
     private fun seed(title: String = "界面测试任务") = ui.runOnIdle { TaskRepository.add(title, LocalDate.now().toString()) }
 
+    private fun decodeVisibleQr(description: String, expected: (String) -> Boolean = { true }): String {
+        var text: String? = null
+        // A semantics node may appear before the system Activity transition/pixel copy settles.
+        // Like the continuous camera decoder, wait for a complete, current QR frame.
+        ui.waitUntil(5000) {
+            val image = ui.onNodeWithContentDescription(description).captureToImage().asAndroidBitmap()
+            try {
+                val pixels = IntArray(image.width * image.height)
+                image.getPixels(pixels, 0, image.width, 0, 0, image.width, image.height)
+                val source = com.google.zxing.RGBLuminanceSource(image.width, image.height, pixels)
+                val result = com.google.zxing.MultiFormatReader().decode(
+                    com.google.zxing.BinaryBitmap(com.google.zxing.common.HybridBinarizer(source)),
+                    mapOf(com.google.zxing.DecodeHintType.POSSIBLE_FORMATS to listOf(com.google.zxing.BarcodeFormat.QR_CODE), com.google.zxing.DecodeHintType.TRY_HARDER to true),
+                ).text
+                if (expected(result)) text = result
+                text != null
+            } catch (_: com.google.zxing.ReaderException) { false }
+            finally { image.recycle() }
+        }
+        return text!!
+    }
+
     @Test fun createEditCompleteAndPersist() {
         ui.onNodeWithText("+").performClick()
         ui.onNodeWithText("标题").performTextInput("界面新增任务")
@@ -209,21 +231,13 @@ class AppFunctionalTest {
             ui.waitUntil(15000) { ui.onAllNodesWithContentDescription("任务 JSON 二维码，第 1 张").fetchSemanticsNodes().isNotEmpty() }
             ui.onNodeWithContentDescription("任务 JSON 二维码，第 1 张").assertIsDisplayed()
             ui.waitForIdle()
-            // UiAutomation screenshots include the system's Activity transition, outside Compose idle.
-            Thread.sleep(600)
+            val decoded = decodeVisibleQr("任务 JSON 二维码，第 1 张") { it.contains("实际屏幕二维码任务") }
+            assertTrue(decoded.contains("实际屏幕二维码任务"))
             val bitmap = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
             File(cache, "qa-qr-export.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
             val bounds = ui.onNodeWithContentDescription("任务 JSON 二维码，第 1 张").fetchSemanticsNode().boundsInRoot
             assertTrue(bounds.left >= 0 && bounds.top >= 0 && bounds.right <= bitmap.width && bounds.bottom <= bitmap.height)
-            // Capture the displayed node in window coordinates; boundsInRoot excludes system bars.
-            val crop = ui.onNodeWithContentDescription("任务 JSON 二维码，第 1 张").captureToImage().asAndroidBitmap()
-            val pixels = IntArray(crop.width * crop.height)
-            crop.getPixels(pixels, 0, crop.width, 0, 0, crop.width, crop.height)
-            val source = com.google.zxing.RGBLuminanceSource(crop.width, crop.height, pixels)
-            val binary = com.google.zxing.BinaryBitmap(com.google.zxing.common.HybridBinarizer(source))
-            val decoded = com.google.zxing.MultiFormatReader().decode(binary, mapOf(com.google.zxing.DecodeHintType.TRY_HARDER to true))
-            assertTrue(decoded.text.contains("实际屏幕二维码任务"))
-            crop.recycle(); bitmap.recycle()
+            bitmap.recycle()
         } finally { scenario.close() }
     }
     @Test fun moveDateDialogCanClearDate() {
@@ -231,6 +245,44 @@ class AppFunctionalTest {
         ui.onNodeWithText("改期").performClick()
         ui.onNodeWithText("移到「无日期」").performClick()
         ui.runOnIdle { assertEquals("", TaskRepository.state.value.items.single().date) }
+    }
+    @Test fun compressedQrExportIsSmallAndLegacyModeStillWorks() {
+        val context = ui.activity.applicationContext
+        ui.runOnIdle {
+            TaskRepository.addAll((1..20).map { com.deskweek.android.core.model.Task("", "周历密度测试任务 $it", detail = "确认时间和地点", date = LocalDate.now().toString()) })
+        }
+        val scenario = androidx.test.core.app.ActivityScenario.launch<com.deskweek.android.transfer.QrExportActivity>(
+            Intent(context, com.deskweek.android.transfer.QrExportActivity::class.java))
+        try {
+            fun pageCount(): Int? = ui.onAllNodes(hasText(" / ", substring = true)).fetchSemanticsNodes()
+                .firstOrNull()?.config?.get(androidx.compose.ui.semantics.SemanticsProperties.Text)?.firstOrNull()?.text
+                ?.substringAfter(" / ")?.substringBefore(" 张")?.toIntOrNull()
+            ui.waitUntil(15000) { pageCount() != null && ui.onAllNodesWithContentDescription("任务 JSON 二维码，第 1 张").fetchSemanticsNodes().isNotEmpty() }
+            val compressedCount = pageCount()!!
+            assertTrue("20 tasks generated $compressedCount compressed QR codes", compressedCount <= 3)
+            val collector = com.deskweek.android.core.transfer.JsonQr.Collector()
+            var received: com.deskweek.android.core.transfer.JsonQr.Result? = null
+            for (i in 1..compressedCount) {
+                ui.waitUntil(15000) { ui.onAllNodesWithContentDescription("任务 JSON 二维码，第 $i 张").fetchSemanticsNodes().isNotEmpty() }
+                ui.waitForIdle()
+                val decoded = decodeVisibleQr("任务 JSON 二维码，第 $i 张") { text ->
+                    val value = kotlinx.serialization.json.Json.parseToJsonElement(text) as? kotlinx.serialization.json.JsonObject
+                    value?.get("p")?.toString() == i.toString()
+                }
+                received = collector.accept(decoded)
+                if (i == 1) {
+                    val screenshot = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
+                    File(context.cacheDir, "qa-compressed-qr.png").outputStream().use { screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+                    screenshot.recycle()
+                }
+                if (i < compressedCount) ui.onNodeWithText("下一张").performClick()
+            }
+            assertEquals(20, com.deskweek.android.core.transfer.JsonQr.validate(received!!.text!!).getValue("items").let { (it as kotlinx.serialization.json.JsonArray).size })
+            ui.onNode(isToggleable()).performClick()
+            ui.waitUntil(15000) { (pageCount() ?: 0) > compressedCount }
+            assertTrue(pageCount()!! >= 15)
+            assertEquals(20, TaskRepository.state.value.items.size)
+        } finally { scenario.close() }
     }
     @Test fun dragReschedulesAndCancelledDragKeepsTheDate() {
         val first = seed("拖动任务")

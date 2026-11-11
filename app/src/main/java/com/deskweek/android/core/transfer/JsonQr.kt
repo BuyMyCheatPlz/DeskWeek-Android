@@ -5,6 +5,9 @@ import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 import java.security.MessageDigest
 import java.util.Base64
+import java.io.ByteArrayOutputStream
+import java.util.zip.Deflater
+import java.util.zip.Inflater
 
 /** Offline JSON transport. Single QR contains raw JSON; multipart QR contains a JSON envelope. */
 object JsonQr {
@@ -13,6 +16,8 @@ object JsonQr {
     const val QR_BYTES = 650
     const val CHUNK_BYTES = 300
     const val MAX_PARTS = (MAX_BYTES + CHUNK_BYTES - 1) / CHUNK_BYTES
+    const val COMPRESSED_CHUNK_BYTES = 600
+    private const val MAX_COMPRESSED_PARTS = (MAX_BYTES + COMPRESSED_CHUNK_BYTES - 1) / COMPRESSED_CHUNK_BYTES
     private fun hash(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
     fun validate(text: String): JsonObject {
         require(text.toByteArray().size <= MAX_BYTES) { "JSON 超过 1 MiB，请使用文件导入" }
@@ -37,7 +42,7 @@ object JsonQr {
         require("prefs" !in value || value["prefs"] is JsonObject) { "prefs 格式无效" }
         return value
     }
-    fun frames(text: String): List<String> {
+    private fun legacyFrames(text: String): List<String> {
         val compact = validate(text).toString()
         val bytes = compact.toByteArray(Charsets.UTF_8)
         if (bytes.size <= QR_BYTES) return listOf(compact)
@@ -49,6 +54,28 @@ object JsonQr {
             put("data", Base64.getEncoder().encodeToString(part.toByteArray()))
         }.toString() }
     }
+    fun frames(text: String, legacy: Boolean = false): List<String> {
+        val compact = validate(text).toString(); val raw = compact.toByteArray(Charsets.UTF_8)
+        if (legacy) return legacyFrames(compact)
+        val oldCount = if (raw.size <= QR_BYTES) 1 else (raw.size + CHUNK_BYTES - 1) / CHUNK_BYTES
+        val deflater = Deflater()
+        val output = ByteArrayOutputStream()
+        try {
+            deflater.setInput(raw); deflater.finish(); val buffer = ByteArray(4096)
+            while (!deflater.finished()) { val count = deflater.deflate(buffer); check(count > 0); output.write(buffer, 0, count) }
+        } finally { deflater.end() }
+        val zipped = output.toByteArray()
+        if (zipped.size > MAX_BYTES) return legacyFrames(compact)
+        val sha = hash(zipped); val parts = zipped.toList().chunked(COMPRESSED_CHUNK_BYTES)
+        val result = parts.mapIndexed { index, part -> buildJsonObject {
+            put("f", "DWQ"); put("v", 2); put("p", index + 1); put("n", parts.size)
+            put("b", zipped.size); put("u", raw.size); put("h", sha)
+            put("d", Base64.getEncoder().encodeToString(part.toByteArray()))
+        }.toString() }
+        if (result.size < oldCount) return result
+        val old = legacyFrames(compact)
+        return if (result.size == oldCount && result.sumOf { it.toByteArray().size } < old.sumOf { it.toByteArray().size }) result else old
+    }
     data class Result(val received: Int, val total: Int, val text: String? = null)
     class Collector {
         private var meta: String? = null
@@ -59,6 +86,7 @@ object JsonQr {
         fun accept(text: String): Result {
             require(text.toByteArray().size <= 2048) { "二维码内容过大或不是 DeskWeek 数据" }
             val p = Json.parseToJsonElement(text) as? JsonObject ?: error("二维码不是 JSON 对象")
+            if (p["f"] == JsonPrimitive("DWQ")) return acceptCompressed(p)
             if (p["format"] != JsonPrimitive(FORMAT)) {
                 check(meta == null) { "正在接收另一份数据，请先清空进度" }
                 validate(text); return Result(1, 1, text)
@@ -79,6 +107,36 @@ object JsonQr {
             (1..count).forEach { index -> parts.getValue(index).let { it.copyInto(all, offset); offset += it.size } }
             require(hash(all) == sha) { "完整性校验失败，请清空后重扫" }
             val decoded = Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(all)).toString()
+            validate(decoded); return Result(parts.size, count, decoded)
+        }
+        private fun acceptCompressed(p: JsonObject): Result {
+            fun number(k: String) = (p[k] as? JsonPrimitive)?.takeUnless { it.isString }?.intOrNull ?: error("分片 $k 无效")
+            fun string(k: String) = (p[k] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: error("分片 $k 无效")
+            require(number("v") == 2) { "二维码版本不兼容，请更新两端应用" }
+            val count = number("n"); val part = number("p"); val size = number("b"); val rawSize = number("u"); val sha = string("h")
+            require(count in 1..MAX_COMPRESSED_PARTS && part in 1..count && size in 1..MAX_BYTES && rawSize in 1..MAX_BYTES && count == (size + COMPRESSED_CHUNK_BYTES - 1) / COMPRESSED_CHUNK_BYTES && sha.matches(Regex("[a-f0-9]{64}"))) { "压缩二维码格式无效" }
+            val content = string("d"); val bytes = Base64.getDecoder().decode(content)
+            require(Base64.getEncoder().encodeToString(bytes) == content && bytes.size == if (part == count) size - (count - 1) * COMPRESSED_CHUNK_BYTES else COMPRESSED_CHUNK_BYTES) { "二维码分片长度无效" }
+            val nextMeta = "v2:$count:$size:$rawSize:$sha"
+            check(meta == null || meta == nextMeta) { "扫到了另一份数据，请先清空进度" }
+            check(parts[part] == null || parts[part]!!.contentEquals(bytes)) { "重复分片内容冲突，请重新扫描" }
+            meta = nextMeta; total = count; parts[part] = bytes
+            if (parts.size != count) return progress
+            val zipped = ByteArray(size); var offset = 0
+            (1..count).forEach { index -> parts.getValue(index).let { it.copyInto(zipped, offset); offset += it.size } }
+            require(hash(zipped) == sha) { "完整性校验失败，请清空后重扫" }
+            val inflater = Inflater(); val output = ByteArrayOutputStream()
+            try {
+                inflater.setInput(zipped); val buffer = ByteArray(4096)
+                while (!inflater.finished()) {
+                    val written = inflater.inflate(buffer)
+                    require(output.size() + written <= rawSize) { "解压数据超过声明长度" }
+                    if (written > 0) output.write(buffer, 0, written)
+                    else require(inflater.finished()) { "压缩数据不完整或格式无效" }
+                }
+                require(inflater.remaining == 0 && output.size() == rawSize) { "解压数据长度不符" }
+            } finally { inflater.end() }
+            val decoded = Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(output.toByteArray())).toString()
             validate(decoded); return Result(parts.size, count, decoded)
         }
     }

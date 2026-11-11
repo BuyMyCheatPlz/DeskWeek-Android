@@ -17,7 +17,7 @@ class JsonQrTest {
         assertEquals(Json.parseToJsonElement(text), Json.parseToJsonElement(JsonQr.Collector().accept(JsonQr.frames(text).single()).text!!))
     }
     @Test fun sharesExactWireFramesWithDesktop() {
-        assertEquals(frames, JsonQr.frames(snapshot.toString()))
+        assertEquals(frames, JsonQr.frames(snapshot.toString(), legacy = true))
         assertTrue(frames.all { it.toByteArray().size <= JsonQr.QR_BYTES })
         val collector = JsonQr.Collector()
         assertNull(collector.accept(frames.last()).text)
